@@ -1,0 +1,15 @@
+# Build outputs
+bin/
+obj/
+target/
+.vs/
+*.user
+*.suo
+*.pdb
+
+# Installer outputs (distributed via GitHub Releases)
+Installer/Output/
+*.msi
+*.exe
+*.zip
+*.reg
