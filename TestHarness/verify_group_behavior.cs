@@ -27,7 +27,7 @@ public class EntryPoint
     public void FromVegas(Vegas vegas)
     {
         var log = new StringBuilder();
-        string wavPath = Path.Combine(Path.GetTempPath(), "TellTale_GroupVerify_Tone.wav");
+        string wavPath = Path.Combine(Path.GetTempPath(), "telltale_group_probe.wav");
         string reportPath = Path.Combine(Path.GetTempPath(), "TellTale_group_verification.txt");
 
         try
@@ -43,7 +43,7 @@ public class EntryPoint
                 return;
             }
 
-            WriteToneWav(wavPath, 2.0);
+            WriteToneWav(wavPath, 1.0);
 
             if (!vegas.NewProject())
             {
@@ -55,13 +55,15 @@ public class EntryPoint
                 return;
             }
 
-            Media media = new Media(wavPath);
-            AudioStream stream = media.GetAudioStreamByIndex(0);
+            Media media = Media.CreateInstance(vegas.Project, wavPath);
+            if (media == null)
+                throw new InvalidOperationException("Media.CreateInstance returned null for the probe WAV.");
+
             AudioTrack track = vegas.Project.AddAudioTrack();
 
             // --- Test 1: AdjustStartLength on one grouped member -------------------
-            AudioEvent a = AddEvent(track, stream, 0.0);
-            AudioEvent b = AddEvent(track, stream, 2.0);
+            AudioEvent a = AddEvent(track, media, 0.0);
+            AudioEvent b = AddEvent(track, media, 2.0);
             MakeGroup(vegas, a, b);
 
             double bStartBefore = Seconds(b.Start);
@@ -78,8 +80,8 @@ public class EntryPoint
             log.AppendLine();
 
             // --- Test 2: Split on one grouped member -------------------------------
-            AudioEvent c = AddEvent(track, stream, 12.0);
-            AudioEvent d = AddEvent(track, stream, 14.0);
+            AudioEvent c = AddEvent(track, media, 12.0);
+            AudioEvent d = AddEvent(track, media, 14.0);
             MakeGroup(vegas, c, d);
 
             int eventCountBefore = track.Events.Count;
@@ -96,8 +98,8 @@ public class EntryPoint
             log.AppendLine();
 
             // --- Test 3: PlaybackRate on one grouped member ------------------------
-            AudioEvent e = AddEvent(track, stream, 16.0);
-            AudioEvent f = AddEvent(track, stream, 18.0);
+            AudioEvent e = AddEvent(track, media, 16.0);
+            AudioEvent f = AddEvent(track, media, 18.0);
             MakeGroup(vegas, e, f);
 
             e.PlaybackRate = 1.05;
@@ -141,21 +143,48 @@ public class EntryPoint
         }
     }
 
-    private static AudioEvent AddEvent(AudioTrack track, AudioStream stream, double startSeconds)
+    private static AudioEvent AddEvent(AudioTrack track, Media media, double startSeconds)
     {
         AudioEvent ev = track.AddAudioEvent(
             Timecode.FromSeconds(startSeconds),
             Timecode.FromSeconds(1.0));
-        ev.AddTake(stream);
+
+        AudioStream stream = media.GetAudioStreamByIndex(0);
+        if (stream == null)
+            throw new InvalidOperationException("The probe WAV has no audio stream.");
+
+        Take take = ev.AddTake(stream);
+        if (take == null)
+            throw new InvalidOperationException("AddTake returned null for the probe WAV.");
+
+        ev.ActiveTake = take;
+
+        if (ev.ActiveTake == null || ev.ActiveTake.Media == null)
+            throw new InvalidOperationException("The audio event has no valid active take/media after AddTake.");
+
         return ev;
     }
 
     private static TrackEventGroup MakeGroup(Vegas vegas, TrackEvent first, TrackEvent second)
     {
+        if (first == null || second == null)
+            throw new InvalidOperationException("Group requires two events.");
+        if (first.ActiveTake == null || first.ActiveTake.Media == null)
+            throw new InvalidOperationException("First event has no valid take/media.");
+        if (second.ActiveTake == null || second.ActiveTake.Media == null)
+            throw new InvalidOperationException("Second event has no valid take/media.");
+
         var group = new TrackEventGroup(vegas.Project);
+
+        // Register the group before adding members. VEGAS' COM layer rejects
+        // IGroupCOM.AddTrackEvent on an unregistered or empty-media event.
+        vegas.Project.TrackEventGroups.Add(group);
         group.Add(first);
         group.Add(second);
-        vegas.Project.Groups.Add(group);
+
+        if (group.Count != 2)
+            throw new InvalidOperationException("TrackEventGroup did not accept both events (count=" + group.Count + ").");
+
         return group;
     }
 
