@@ -71,10 +71,10 @@ public class EntryPoint
             bool autoMove = Math.Abs(companionShift - 5.0) < 0.01;
 
             log.AppendLine("=== AdjustStartLength(primary + 5.0 s) ===");
-            log.AppendLine($"Companion start before: {bStartBefore:F3}s");
-            log.AppendLine($"Companion start after:  {bStartAfter:F3}s");
-            log.AppendLine($"Companion moved:        {companionShift:+0.000;-0.000;0.000}s");
-            log.AppendLine($"Host auto-move:         {(autoMove ? "YES" : "NO")}");
+            log.AppendLine(string.Format("Companion start before: {0:F3}s", bStartBefore));
+            log.AppendLine(string.Format("Companion start after:  {0:F3}s", bStartAfter));
+            log.AppendLine(string.Format("Companion moved:        {0:+0.000;-0.000;0.000}s", companionShift));
+            log.AppendLine(string.Format("Host auto-move:         {0}", autoMove ? "YES" : "NO"));
             log.AppendLine();
 
             // --- Test 2: Split on one grouped member -------------------------------
@@ -90,9 +90,9 @@ public class EntryPoint
             bool autoSplit = (eventCountAfter - eventCountBefore) >= 2;
 
             log.AppendLine("=== Split(primary at +0.5 s) ===");
-            log.AppendLine($"Track event count:      {eventCountBefore} -> {eventCountAfter}");
-            log.AppendLine($"Companion length:       {dLengthBefore:F3}s -> {dLengthAfter:F3}s");
-            log.AppendLine($"Host auto-split:        {(autoSplit ? "YES" : "NO")}");
+            log.AppendLine(string.Format("Track event count:      {0} -> {1}", eventCountBefore, eventCountAfter));
+            log.AppendLine(string.Format("Companion length:       {0:F3}s -> {1:F3}s", dLengthBefore, dLengthAfter));
+            log.AppendLine(string.Format("Host auto-split:        {0}", autoSplit ? "YES" : "NO"));
             log.AppendLine();
 
             // --- Test 3: PlaybackRate on one grouped member ------------------------
@@ -105,8 +105,8 @@ public class EntryPoint
             bool autoRate = Math.Abs(companionRate - 1.05) < 1e-6;
 
             log.AppendLine("=== PlaybackRate(primary = 1.05) ===");
-            log.AppendLine($"Companion playback rate: {companionRate:F6}");
-            log.AppendLine($"Host auto-rate:          {(autoRate ? "YES" : "NO")}");
+            log.AppendLine(string.Format("Companion playback rate: {0:F6}", companionRate));
+            log.AppendLine(string.Format("Host auto-rate:          {0}", autoRate ? "YES" : "NO"));
             log.AppendLine();
 
             log.AppendLine("=== INTERPRETATION ===");
