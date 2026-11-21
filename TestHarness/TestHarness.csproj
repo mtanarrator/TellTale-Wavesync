@@ -12,6 +12,11 @@
     <ProjectReference Include="..\VegasAudioSync\VegasAudioSync.csproj" />
   </ItemGroup>
 
+  <!-- verify_group_behavior.cs is a standalone VEGAS script, not part of this console app. -->
+  <ItemGroup>
+    <Compile Remove="verify_group_behavior.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <None Include="..\vegas_sync_core\target\release\telltale_sync_core.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>

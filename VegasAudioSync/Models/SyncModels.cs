@@ -31,6 +31,13 @@ namespace VegasAudioSync.Models
         [DataMember(Name = "voice_activity_filter")]
         public bool VoiceActivityFilter { get; set; } = false;
 
+        /// <summary>
+        /// When true, recorded timestamps are never used to place or reorder events.
+        /// Each source group is shifted by one rigid delta and track layout is left alone.
+        /// </summary>
+        [DataMember(Name = "preserve_timeline_order")]
+        public bool PreserveTimelineOrder { get; set; } = false;
+
         [DataMember(Name = "internal_sample_rate")]
         public uint InternalSampleRate { get; set; } = 16000;
 
@@ -100,6 +107,47 @@ namespace VegasAudioSync.Models
     }
 
     [DataContract]
+    public class EventGroupMember
+    {
+        [DataMember(Name = "event_id")]
+        public string EventId { get; set; }
+
+        [DataMember(Name = "track_id")]
+        public string TrackId { get; set; }
+
+        [DataMember(Name = "timeline_start_seconds")]
+        public double TimelineStartSeconds { get; set; }
+
+        [DataMember(Name = "timeline_length_seconds")]
+        public double TimelineLengthSeconds { get; set; }
+
+        [DataMember(Name = "media_start_seconds")]
+        public double MediaStartSeconds { get; set; }
+
+        [DataMember(Name = "stream_index")]
+        public uint StreamIndex { get; set; }
+
+        [DataMember(Name = "is_video")]
+        public bool IsVideo { get; set; }
+    }
+
+    [DataContract]
+    public class EventGroupDescriptor
+    {
+        [DataMember(Name = "group_id")]
+        public string GroupId { get; set; }
+
+        [DataMember(Name = "kind")]
+        public string Kind { get; set; }
+
+        [DataMember(Name = "primary_event_id")]
+        public string PrimaryEventId { get; set; }
+
+        [DataMember(Name = "members")]
+        public List<EventGroupMember> Members { get; set; } = new List<EventGroupMember>();
+    }
+
+    [DataContract]
     public class SyncTaskRequest
     {
         [DataMember(Name = "project_sample_rate")]
@@ -110,6 +158,9 @@ namespace VegasAudioSync.Models
 
         [DataMember(Name = "tracks")]
         public List<TrackDescriptor> Tracks { get; set; } = new List<TrackDescriptor>();
+
+        [DataMember(Name = "groups")]
+        public List<EventGroupDescriptor> Groups { get; set; } = new List<EventGroupDescriptor>();
 
         [DataMember(Name = "options")]
         public SyncOptions Options { get; set; } = new SyncOptions();
