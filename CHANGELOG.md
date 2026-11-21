@@ -1,5 +1,14 @@
 # TellTale WaveSync — Change Summary
 
+## v1.4.0 — Sync in Place + Grouped Atomic Sync
+
+- **Sync in Place (`preserve_timeline_order`):** one rigid shift per source; recorded timestamps are never used to reorder events; no tracks are added; overlaps are reported. Default **OFF**.
+- **Grouped primary reference:** grouped multi-channel audio and A/V sets are analyzed through the lowest-`Track.Index` audio-capable primary only; companions are not decoded or correlated twice.
+- **Atomic group move:** after the host gate confirmed VEGAS does **not** auto-move/split/rate companions, `EnableAtomicGroupMove = true` and `AutoMoveCompanionsInApplier = true` move, split, and rate-match every member inside the single `UndoBlock`, preserving internal offsets. Pre-validation prevents partial group commits.
+- **Host verification script:** `TestHarness/verify_group_behavior.cs` (C# 5, valid 1 s probe WAV, project-bound `Media.CreateInstance`, `TrackEventGroups.Add` before members).
+- **Branded binaries:** `TellTale_Audiosync.dll` + `telltale_sync_core.dll`; FFI symbols remain `vegas_sync_*`.
+- **Installers:** Inno `TellTale_WaveSync_Setup_v1.4.exe` and WiX `TellTale_WaveSync_Setup_v1.4.msi`; legacy `TellTaleWaveSync.dll*` / `vegas_sync_core.dll` are removed on install.
+
 ## Capacity & Performance
 
 - **Built for 1,000+ camera clips on one timeline.** Events are analyzed in small parallel batches (max 4 workers), and every decoded buffer is released as soon as its event is resolved, so memory stays flat instead of growing with the project size.
@@ -49,6 +58,6 @@
 
 ## Packaging
 
-- `TellTale_WaveSync_Setup_v1.3.1.exe`
-- Native engine `telltale_sync_core.dll` v0.2.0; extension `TellTale_Audiosync.dll` v1.3.1.
+- `TellTale_WaveSync_Setup_v1.4.exe`
+- Native engine `telltale_sync_core.dll` v0.2.0; extension `TellTale_Audiosync.dll` v1.4.0.
 - 30 Rust tests + harness checks for long takes, source clocks, crossfade lanes, and cancellation.

@@ -8,10 +8,10 @@ namespace VegasAudioSync.Services
     public class TimelineApplier
     {
         /// <summary>
-        /// Host-gated Upgrade 2 switch. Leave false until verify_group_behavior.cs
-        /// confirms how VEGAS moves/splits/rate-changes grouped companions.
+        /// Host-gated Upgrade 2 switch. Verified with verify_group_behavior.cs:
+        /// VEGAS does NOT auto-move, auto-split, or auto-rate grouped companions.
         /// </summary>
-        public static bool EnableAtomicGroupMove = false;
+        public static bool EnableAtomicGroupMove = true;
 
         /// <summary>
         /// True while the applier is responsible for shifting grouped companions

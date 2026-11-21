@@ -4,8 +4,8 @@
 **TellTale WaveSync** is a 100% free, native audio & multi-camera synchronization extension for **VEGAS Pro** (a PluralEyes alternative).
 - **Architecture:**
   - **Rust Native Engine:** `D:\VEGAS Extensions\VEGAS Audio Sync\vegas_sync_core` → compiles to `telltale_sync_core.dll` (30 tests passing, including long-take, source-clock, master-anchor and crossfade-lane suites).
-  - **C# .NET 4.8 Extension & WPF UI:** `D:\VEGAS Extensions\VEGAS Audio Sync\VegasAudioSync` → compiles to `TellTale_Audiosync.dll` (v1.3.1).
-  - **Installer:** `D:\VEGAS Extensions\VEGAS Audio Sync\Installer\TellTaleWaveSync_Installer.iss` → compiles via Inno Setup 6 (`ISCC.exe`) to `TellTale_WaveSync_Setup_v1.3.1.exe`.
+  - **C# .NET 4.8 Extension & WPF UI:** `D:\VEGAS Extensions\VEGAS Audio Sync\VegasAudioSync` → compiles to `TellTale_Audiosync.dll` (v1.4.0).
+  - **Installer:** `D:\VEGAS Extensions\VEGAS Audio Sync\Installer\TellTaleWaveSync_Installer.iss` → compiles via Inno Setup 6 (`ISCC.exe`) to `TellTale_WaveSync_Setup_v1.4.exe`.
 
 ---
 
@@ -53,6 +53,20 @@ The v1.2 behavior still failed on the real "Sync Wedding" project: 2–4 s camer
 - `TimelineApplier` verifies each lane move (`ev.Track.Index`), reuses existing "Sync Lane N" tracks on re-runs, and caps lanes per track.
 
 **Validation on the real files:** all 167 FX3 clips align against the 9 h master in ~30 s; 166/167 transitions match the recorded timeline exactly (the single 30.5 s step is the boundary between the two camera clock bodies). The AX100 group (7 clips) also aligns consistently. `TestHarness --realtest <master> <off> <len> <clip:|...>` reproduces this.
+
+### v1.4.0 - Sync in Place + atomic grouped sync (activation)
+Host gate (`TestHarness/verify_group_behavior.cs`) confirmed on VEGAS Pro 2027:
+- `AdjustStartLength` on primary → companion auto-move: **NO**
+- `Split` on primary → companion auto-split: **NO**
+- `PlaybackRate` on primary → companion auto-rate: **NO**
+
+Activated:
+- `TimelineApplier.EnableAtomicGroupMove = true`
+- `TimelineApplier.AutoMoveCompanionsInApplier = true`
+- `preserve_timeline_order` remains default **false**; UI toggle **Sync in Place (Lock Order)**.
+- Grouped A/V and multi-channel audio are analyzed through the lowest-`Track.Index` audio-capable primary and moved/split/rate-matched atomically inside the single `UndoBlock`, after pre-validating every member.
+- Release installers: `TellTale_WaveSync_Setup_v1.4.exe` (Inno) and `TellTale_WaveSync_Setup_v1.4.msi` (WiX); both remove legacy `TellTaleWaveSync.dll*` / `vegas_sync_core.dll`.
+
 
 ### v1.3.1 - Manual master anchor
 The Master Anchor dropdown previously listed **audio tracks only** and reset to Auto on every refresh, so a video/camera track could never be chosen.
