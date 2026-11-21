@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using VegasAudioSync.Interop;
 using VegasAudioSync.Models;
+using VegasAudioSync.Services;
 
 namespace TestHarness
 {
@@ -35,6 +36,16 @@ namespace TestHarness
             if (args.Length > 0 && args[0] == "--realtest")
             {
                 return RunRealMediaTest(args);
+            }
+
+            if (args.Length > 0 && args[0] == "--ordertest")
+            {
+                return RunOrderTest();
+            }
+
+            if (args.Length > 0 && args[0] == "--grouptest")
+            {
+                return RunGroupTest();
             }
             Console.WriteLine("=================================================");
             Console.WriteLine("  VEGAS Audio Sync - Phase 1 Verification Test   ");
@@ -465,6 +476,216 @@ namespace TestHarness
                 if (matches.Length > 0) return matches[0];
             }
             return "ffmpeg";
+        }
+
+        private static int RunOrderTest()
+        {
+            Console.WriteLine("=== Preserve Timeline Order Test ===");
+            const int rate = 16000;
+            const double masterSeconds = 180.0;
+            const double clipSeconds = 20.0;
+            double[] truePositions = { 20.0, 80.0, 140.0 };
+            double[] timelinePositions = { 120.0, 70.0, 20.0 };
+            string[] ids = { "Ev_A", "Ev_B", "Ev_C" };
+            const double recordedBase = 1_000_000.0;
+
+            string tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "wavesync_ordertest");
+            System.IO.Directory.CreateDirectory(tempDir);
+
+            try
+            {
+                float[] master = BuildLongRecording(rate, masterSeconds);
+                string masterPath = System.IO.Path.Combine(tempDir, "master.wav");
+                WriteWav(masterPath, rate, master);
+
+                var clipPaths = new string[3];
+                for (int i = 0; i < 3; i++)
+                {
+                    int start = (int)(truePositions[i] * rate);
+                    int length = (int)(clipSeconds * rate);
+                    var clip = new float[length];
+                    Array.Copy(master, start, clip, 0, length);
+                    clipPaths[i] = System.IO.Path.Combine(tempDir, $"clip_{i}.wav");
+                    WriteWav(clipPaths[i], rate, clip);
+                }
+
+                Func<bool, SyncManifest> run = preserve =>
+                {
+                    var request = new SyncTaskRequest
+                    {
+                        ProjectSampleRate = 48000,
+                        MasterTrackId = "Track_Master",
+                        Tracks = new List<TrackDescriptor>
+                        {
+                            new TrackDescriptor
+                            {
+                                TrackId = "Track_Master",
+                                Name = "Master",
+                                IsAudio = true,
+                                Events = new List<EventDescriptor>
+                                {
+                                    new EventDescriptor
+                                    {
+                                        EventId = "Ev_Master",
+                                        TrackId = "Track_Master",
+                                        FilePath = masterPath,
+                                        TimelineStartSeconds = 0.0,
+                                        TimelineLengthSeconds = masterSeconds,
+                                        MediaStartSeconds = 0.0,
+                                        MediaLengthSeconds = masterSeconds
+                                    }
+                                }
+                            },
+                            new TrackDescriptor
+                            {
+                                TrackId = "Track_Cam",
+                                Name = "Camera",
+                                IsAudio = true,
+                                Events = BuildOrderEvents(ids, clipPaths, timelinePositions, clipSeconds, recordedBase, truePositions)
+                            }
+                        },
+                        Options = new SyncOptions
+                        {
+                            DetectDrift = false,
+                            MaxDriftPpm = 500.0,
+                            DiscontinuityThresholdMs = 50.0,
+                            SubSampleAccuracy = true,
+                            DetectDiscontinuities = false,
+                            SpeedOfSoundCompensation = false,
+                            VoiceActivityFilter = false,
+                            PreserveTimelineOrder = preserve,
+                            InternalSampleRate = rate
+                        }
+                    };
+
+                    var engine = new NativeSyncEngine();
+                    return engine.ExecuteSync(request);
+                };
+
+                var preserved = run(true);
+                var unrestricted = run(false);
+
+                double a1 = Resolved(preserved, "Ev_A");
+                double b1 = Resolved(preserved, "Ev_B");
+                double c1 = Resolved(preserved, "Ev_C");
+                double a2 = Resolved(unrestricted, "Ev_A");
+                double b2 = Resolved(unrestricted, "Ev_B");
+                double c2 = Resolved(unrestricted, "Ev_C");
+
+                bool preserveOk = Near(a1, 130.0) && Near(b1, 80.0) && Near(c1, 30.0);
+                bool unrestrictedOk = Near(a2, 20.0) && Near(b2, 80.0) && Near(c2, 140.0);
+                bool orderOk = OrderOf(a1, b1, c1) == "2,1,0" && OrderOf(a2, b2, c2) == "0,1,2";
+
+                Console.WriteLine($"Preserve ON : A={a1:F3}s B={b1:F3}s C={c1:F3}s (expected 130/80/30)");
+                Console.WriteLine($"Preserve OFF: A={a2:F3}s B={b2:F3}s C={c2:F3}s (expected 20/80/140)");
+                Console.WriteLine($"Order ON={OrderOf(a1, b1, c1)} (C,B,A)  Order OFF={OrderOf(a2, b2, c2)} (A,B,C)");
+
+                bool passed = preserveOk && unrestrictedOk && orderOk;
+                Console.WriteLine(passed ? "=== ORDER TEST PASSED ===" : "=== ORDER TEST FAILED ===");
+                return passed ? 0 : 2;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("FATAL: " + ex);
+                return 99;
+            }
+            finally
+            {
+                try { System.IO.Directory.Delete(tempDir, true); } catch { }
+            }
+        }
+
+        private static List<EventDescriptor> BuildOrderEvents(
+            string[] ids,
+            string[] clipPaths,
+            double[] timelinePositions,
+            double clipSeconds,
+            double recordedBase,
+            double[] truePositions)
+        {
+            var events = new List<EventDescriptor>();
+            for (int i = 0; i < ids.Length; i++)
+            {
+                events.Add(new EventDescriptor
+                {
+                    EventId = ids[i],
+                    TrackId = "Track_Cam",
+                    FilePath = clipPaths[i],
+                    TimelineStartSeconds = timelinePositions[i],
+                    TimelineLengthSeconds = clipSeconds,
+                    MediaStartSeconds = 0.0,
+                    MediaLengthSeconds = clipSeconds,
+                    SourceKey = "cam",
+                    RecordedTimeSeconds = recordedBase + truePositions[i]
+                });
+            }
+            return events;
+        }
+
+        private static double Resolved(SyncManifest manifest, string eventId)
+        {
+            var ev = manifest.Events.Find(e => e.EventId == eventId);
+            if (ev == null) throw new InvalidOperationException("Missing result for " + eventId);
+            return ev.ResolvedStartSeconds;
+        }
+
+        private static bool Near(double value, double expected)
+        {
+            return Math.Abs(value - expected) < 0.25;
+        }
+
+        private static string OrderOf(params double[] starts)
+        {
+            var order = new List<int>();
+            for (int i = 0; i < starts.Length; i++) order.Add(i);
+            order.Sort((a, b) => starts[a].CompareTo(starts[b]));
+            return string.Join(",", order);
+        }
+
+        private static int RunGroupTest()
+        {
+            Console.WriteLine("=== Group Planner Test ===");
+
+            double delta;
+            double[] targets;
+            bool planned = GroupPlanner.TryPlan(
+                10.0,
+                15.0,
+                new[] { 10.0, 20.0, 30.0 },
+                out delta,
+                out targets);
+
+            bool mathOk = planned
+                && Near(delta, 5.0)
+                && Near(targets[0], 15.0)
+                && Near(targets[1], 25.0)
+                && Near(targets[2], 35.0);
+
+            bool offsetsOk = GroupPlanner.PreservesInternalOffsets(
+                new[] { 10.0, 20.0, 30.0 },
+                targets);
+
+            var validMembers = new[]
+            {
+                new GroupMemberState { EventId = 1, StartSeconds = 10.0, IsValid = true, IsLocked = false },
+                new GroupMemberState { EventId = 2, StartSeconds = 20.0, IsValid = true, IsLocked = false }
+            };
+            string reason;
+            bool validOk = GroupPlanner.ValidateMembers(validMembers, out reason);
+
+            var lockedMembers = new[]
+            {
+                new GroupMemberState { EventId = 1, StartSeconds = 10.0, IsValid = true, IsLocked = false },
+                new GroupMemberState { EventId = 2, StartSeconds = 20.0, IsValid = true, IsLocked = true }
+            };
+            bool lockedRejected = !GroupPlanner.ValidateMembers(lockedMembers, out reason);
+
+            Console.WriteLine($"Plan: delta={delta:F3}s targets=[{string.Join(",", targets)}]");
+            Console.WriteLine($"Math {(mathOk ? "PASS" : "FAIL")}, offsets {(offsetsOk ? "PASS" : "FAIL")}, validation {(validOk ? "PASS" : "FAIL")}, locked rejected {(lockedRejected ? "PASS" : "FAIL")}");
+
+            bool passed = mathOk && offsetsOk && validOk && lockedRejected;
+            Console.WriteLine(passed ? "=== GROUP TEST PASSED ===" : "=== GROUP TEST FAILED ===");
+            return passed ? 0 : 3;
         }
 
         private static int RunLongTakeTest()
