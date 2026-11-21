@@ -8,6 +8,19 @@ namespace VegasAudioSync.Services
     public class TimelineApplier
     {
         /// <summary>
+        /// Host-gated Upgrade 2 switch. Leave false until verify_group_behavior.cs
+        /// confirms how VEGAS moves/splits/rate-changes grouped companions.
+        /// </summary>
+        public static bool EnableAtomicGroupMove = false;
+
+        /// <summary>
+        /// True while the applier is responsible for shifting grouped companions
+        /// (the existing behavior). Set false if the host verification proves VEGAS
+        /// moves grouped members automatically.
+        /// </summary>
+        public static bool AutoMoveCompanionsInApplier = true;
+
+        /// <summary>
         /// Applies a synchronization manifest to the timeline.
         /// </summary>
         /// <param name="preventCrossfades">
@@ -16,10 +29,16 @@ namespace VegasAudioSync.Services
         /// the same media type (video lanes for video events, audio lanes for audio
         /// events) so VEGAS never inserts unintended crossfades.
         /// </param>
+        /// <param name="preserveTrackLayout">
+        /// When true, no tracks are added and no event is reassigned to another track;
+        /// overlapping results are logged as warnings instead.
+        /// </param>
         public static int ApplyManifest(
             Vegas vegas,
             SyncManifest manifest,
+            IReadOnlyList<EventGroupDescriptor> groups = null,
             bool preventCrossfades = true,
+            bool preserveTrackLayout = false,
             Action<string> logCallback = null)
         {
             if (vegas == null || vegas.Project == null)
@@ -42,6 +61,18 @@ namespace VegasAudioSync.Services
                 if (track.IsAudio() || track.IsVideo())
                 {
                     trackSnapshot.Add(track);
+                }
+            }
+
+            // Stable Event_<track>_<idx> -> live TrackEvent map for group moves.
+            var eventBySyncId = new Dictionary<string, TrackEvent>(StringComparer.Ordinal);
+            foreach (Track track in trackSnapshot)
+            {
+                uint idx = 0;
+                foreach (TrackEvent ev in track.Events)
+                {
+                    eventBySyncId[$"Event_{track.Index}_{idx}"] = ev;
+                    idx++;
                 }
             }
 
@@ -72,6 +103,25 @@ namespace VegasAudioSync.Services
 
             using (var undo = new UndoBlock("Synchronize Audio & Video Events (TellTale WaveSync)"))
             {
+                var handledGroupEventIds = new HashSet<string>(StringComparer.Ordinal);
+                var groupMemberVegasIds = new HashSet<long>();
+
+                if (EnableAtomicGroupMove && groups != null && groups.Count > 0)
+                {
+                    foreach (var group in groups)
+                    {
+                        movedEventsCount += TryApplyGroup(
+                            vegas,
+                            group,
+                            resultMap,
+                            eventBySyncId,
+                            changedVegasEventIds,
+                            handledGroupEventIds,
+                            groupMemberVegasIds,
+                            logCallback);
+                    }
+                }
+
                 foreach (Track track in trackSnapshot)
                 {
                     // Snapshot events and their original Event_<track>_<idx> ids before any
@@ -95,6 +145,9 @@ namespace VegasAudioSync.Services
                         TrackEvent ev = item.Item1;
                         string eventId = item.Item2;
                         EventSyncResult syncResult = item.Item3;
+
+                        if (handledGroupEventIds.Contains(eventId))
+                            continue;
 
                         if (!syncResult.IsAligned)
                         {
@@ -127,15 +180,223 @@ namespace VegasAudioSync.Services
                     }
                 }
 
-                if (preventCrossfades && changedVegasEventIds.Count > 0)
+                if (preventCrossfades && !preserveTrackLayout && changedVegasEventIds.Count > 0)
                 {
-                    SeparateOverlappingEvents(vegas, trackSnapshot, changedVegasEventIds, logCallback);
+                    SeparateOverlappingEvents(vegas, trackSnapshot, changedVegasEventIds, groupMemberVegasIds, logCallback);
+                }
+                else if (preserveTrackLayout && changedVegasEventIds.Count > 0)
+                {
+                    LogOverlappingEvents(trackSnapshot, logCallback);
                 }
 
                 vegas.UpdateUI();
             }
 
             return movedEventsCount;
+        }
+
+        /// <summary>
+        /// Moves an entire VEGAS event group by one delta, after validating every
+        /// member. Pre-validation is mandatory: UndoBlock commits on normal exit, so
+        /// a partial group move must never start.
+        /// </summary>
+        private static int TryApplyGroup(
+            Vegas vegas,
+            EventGroupDescriptor group,
+            Dictionary<string, EventSyncResult> resultMap,
+            Dictionary<string, TrackEvent> eventBySyncId,
+            HashSet<long> changedVegasEventIds,
+            HashSet<string> handledGroupEventIds,
+            HashSet<long> groupMemberVegasIds,
+            Action<string> logCallback)
+        {
+            if (group == null || group.Members == null || group.Members.Count == 0)
+                return 0;
+
+            // Even a failed group must be excluded from the per-event pass, otherwise
+            // a partial move could commit.
+            foreach (var member in group.Members)
+            {
+                handledGroupEventIds.Add(member.EventId);
+            }
+
+            EventSyncResult primaryResult;
+            if (!resultMap.TryGetValue(group.PrimaryEventId, out primaryResult) || !primaryResult.IsAligned)
+            {
+                logCallback?.Invoke($"  Group '{group.GroupId}': primary result missing/unaligned; no members moved.");
+                return 0;
+            }
+
+            var memberEvents = new List<TrackEvent>();
+            var states = new List<GroupMemberState>();
+            var starts = new List<double>();
+            int primaryIndex = -1;
+
+            foreach (var member in group.Members)
+            {
+                TrackEvent ev;
+                if (!eventBySyncId.TryGetValue(member.EventId, out ev)
+                    || ev == null
+                    || !ev.IsValid()
+                    || ev.Locked
+                    || ev.Track == null)
+                {
+                    logCallback?.Invoke(
+                        $"  Group '{group.GroupId}': member '{member.EventId}' is missing, invalid, locked, or detached; no members moved.");
+                    return 0;
+                }
+
+                if (string.Equals(member.EventId, group.PrimaryEventId, StringComparison.Ordinal))
+                    primaryIndex = memberEvents.Count;
+
+                memberEvents.Add(ev);
+                starts.Add(Seconds(ev.Start));
+                states.Add(new GroupMemberState
+                {
+                    EventId = ev.EventID,
+                    StartSeconds = Seconds(ev.Start),
+                    IsValid = true,
+                    IsLocked = ev.Locked
+                });
+            }
+
+            if (primaryIndex < 0)
+            {
+                logCallback?.Invoke($"  Group '{group.GroupId}': primary member not found; no members moved.");
+                return 0;
+            }
+
+            string reason;
+            if (!GroupPlanner.ValidateMembers(states, out reason))
+            {
+                logCallback?.Invoke($"  Group '{group.GroupId}': {reason}; no members moved.");
+                return 0;
+            }
+
+            double delta;
+            double[] targets;
+            if (!GroupPlanner.TryPlan(starts[primaryIndex], primaryResult.ResolvedStartSeconds, starts, out delta, out targets)
+                || !GroupPlanner.PreservesInternalOffsets(starts, targets))
+            {
+                logCallback?.Invoke($"  Group '{group.GroupId}': could not compute a safe rigid move; no members moved.");
+                return 0;
+            }
+
+            double safeRate = Math.Max(0.90, Math.Min(1.10, primaryResult.PlaybackRate));
+            bool rateChanged = Math.Abs(safeRate - 1.0) > 1e-6;
+
+            int moved;
+            if (AutoMoveCompanionsInApplier)
+            {
+                for (int i = 0; i < memberEvents.Count; i++)
+                {
+                    TrackEvent ev = memberEvents[i];
+                    ev.AdjustStartLength(Timecode.FromMilliseconds(targets[i] * 1000.0), ev.Length, false);
+                    if (rateChanged) ev.PlaybackRate = safeRate;
+                    changedVegasEventIds.Add(ev.EventID);
+                    groupMemberVegasIds.Add(ev.EventID);
+                }
+                moved = memberEvents.Count;
+            }
+            else
+            {
+                TrackEvent primary = memberEvents[primaryIndex];
+                primary.AdjustStartLength(
+                    Timecode.FromMilliseconds(targets[primaryIndex] * 1000.0),
+                    primary.Length,
+                    false);
+                if (rateChanged) primary.PlaybackRate = safeRate;
+                changedVegasEventIds.Add(primary.EventID);
+                moved = 1;
+
+                // The host moves companions; pin them so the lane pass cannot split the group.
+                foreach (var ev in memberEvents)
+                {
+                    groupMemberVegasIds.Add(ev.EventID);
+                }
+            }
+
+            // Apply the primary's split recommendations at the same global timeline
+            // points to every member that contains them.
+            if (primaryResult.SplitPointsSeconds != null && primaryResult.SplitPointsSeconds.Count > 0)
+            {
+                var splits = new List<double>(primaryResult.SplitPointsSeconds);
+                splits.Sort((a, b) => b.CompareTo(a));
+
+                foreach (double splitSec in splits)
+                {
+                    double globalSec = splitSec + delta;
+                    foreach (TrackEvent ev in memberEvents)
+                    {
+                        Timecode splitTc = Timecode.FromMilliseconds(globalSec * 1000.0);
+                        if (splitTc <= ev.Start || splitTc >= ev.End)
+                            continue;
+
+                        var before = new HashSet<long>();
+                        foreach (TrackEvent existing in ev.Track.Events)
+                            before.Add(existing.EventID);
+
+                        ev.Split(splitTc - ev.Start);
+
+                        foreach (TrackEvent existing in ev.Track.Events)
+                        {
+                            if (!before.Contains(existing.EventID))
+                            {
+                                changedVegasEventIds.Add(existing.EventID);
+                                groupMemberVegasIds.Add(existing.EventID);
+                            }
+                        }
+                    }
+                }
+            }
+
+            logCallback?.Invoke(
+                $"  Moved group '{group.GroupId}' ({group.Kind}) by {delta:+0.000;-0.000;0.000}s; {moved} member(s) kept their internal offsets.");
+            return moved;
+        }
+
+        private static double Seconds(Timecode tc)
+        {
+            return tc.ToMilliseconds() / 1000.0;
+        }
+
+        /// <summary>
+        /// Sync in Place: report overlapping results that were left alone because
+        /// track layout must not change.
+        /// </summary>
+        private static void LogOverlappingEvents(List<Track> trackSnapshot, Action<string> logCallback)
+        {
+            int overlaps = 0;
+            foreach (Track track in trackSnapshot)
+            {
+                if (!track.IsValid()) continue;
+                var events = new List<TrackEvent>();
+                foreach (TrackEvent ev in track.Events)
+                {
+                    if (ev.IsValid()) events.Add(ev);
+                }
+
+                for (int i = 0; i < events.Count; i++)
+                {
+                    for (int j = i + 1; j < events.Count; j++)
+                    {
+                        double s1 = events[i].Start.ToMilliseconds();
+                        double e1 = events[i].End.ToMilliseconds();
+                        double s2 = events[j].Start.ToMilliseconds();
+                        double e2 = events[j].End.ToMilliseconds();
+                        if (s1 < e2 - 1.0 && e1 > s2 + 1.0)
+                        {
+                            overlaps++;
+                        }
+                    }
+                }
+            }
+
+            if (overlaps > 0)
+            {
+                logCallback?.Invoke(
+                    $"Sync in Place: {overlaps} overlapping pair(s) left on their tracks (no lanes created). Review these manually.");
+            }
         }
 
         private static int ApplyEventResult(
@@ -264,6 +525,12 @@ namespace VegasAudioSync.Services
             HashSet<long> changedVegasEventIds,
             Action<string> logCallback)
         {
+            if (!AutoMoveCompanionsInApplier)
+            {
+                // Host verification proved VEGAS moves grouped companions itself.
+                return;
+            }
+
             if (Math.Abs(deltaTc.ToMilliseconds()) < 1.0 && !rateChanged)
             {
                 return;
@@ -364,6 +631,7 @@ namespace VegasAudioSync.Services
             Vegas vegas,
             List<Track> trackSnapshot,
             HashSet<long> changedVegasEventIds,
+            HashSet<long> pinnedGroupEventIds,
             Action<string> logCallback)
         {
             int lanesCreated = 0;
@@ -400,7 +668,8 @@ namespace VegasAudioSync.Services
                 {
                     starts.Add(ev.Start.ToMilliseconds());
                     ends.Add(ev.End.ToMilliseconds());
-                    pinned.Add(!changedVegasEventIds.Contains(ev.EventID));
+                    pinned.Add(!changedVegasEventIds.Contains(ev.EventID)
+                        || (pinnedGroupEventIds != null && pinnedGroupEventIds.Contains(ev.EventID)));
                 }
 
                 int laneCount;

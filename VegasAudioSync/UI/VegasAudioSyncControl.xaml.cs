@@ -193,6 +193,7 @@ namespace VegasAudioSync.UI
             {
                 bool selectedOnly = ChkSelectedOnly.IsChecked == true;
                 bool includeVideo = ChkIncludeVideo.IsChecked != false;
+                bool preserveOrder = ChkPreserveOrder.IsChecked == true;
 
                 // A video track can only be the master if its clips are analyzed,
                 // so enable that automatically instead of silently falling back.
@@ -230,6 +231,12 @@ namespace VegasAudioSync.UI
                 request.Options.SubSampleAccuracy = ChkSubSample.IsChecked == true;
                 request.Options.DetectDiscontinuities = ChkDiscontinuity.IsChecked == true;
                 request.Options.VoiceActivityFilter = ChkVoiceActivity.IsChecked == true;
+                request.Options.PreserveTimelineOrder = preserveOrder;
+
+                if (preserveOrder)
+                {
+                    AppendLog("Sync in Place enabled: recorded timestamps will not reorder events; no tracks will be added.");
+                }
 
                 if (masterChoice != null && !string.IsNullOrEmpty(masterChoice.TrackId))
                 {
@@ -293,7 +300,12 @@ namespace VegasAudioSync.UI
                     // Apply reconstructed positions to the VEGAS timeline
                     bool preventCrossfades = ChkPreventCrossfades.IsChecked != false;
                     int movedCount = TimelineApplier.ApplyManifest(
-                        _vegas, manifest, preventCrossfades, msg => AppendLog(msg));
+                        _vegas,
+                        manifest,
+                        request.Groups,
+                        preventCrossfades,
+                        preserveOrder,
+                        msg => AppendLog(msg));
                     if (movedCount > 0)
                     {
                         TxtStatus.Text = $"Success! {movedCount} event(s) synchronized.";

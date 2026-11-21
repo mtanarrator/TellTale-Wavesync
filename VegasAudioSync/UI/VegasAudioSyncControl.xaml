@@ -289,6 +289,15 @@
                         <TextBlock Text="Spreads overlapping synced events onto extra video/audio lanes" FontSize="10" Foreground="#8B92A5"/>
                     </StackPanel>
                 </CheckBox>
+
+                <Separator Background="#222634" Margin="0,3"/>
+
+                <CheckBox x:Name="ChkPreserveOrder" Style="{StaticResource ModernToggleSwitch}" IsChecked="False">
+                    <StackPanel>
+                        <TextBlock Text="Sync in Place (Lock Order)" FontWeight="SemiBold" Foreground="#E2E4E9"/>
+                        <TextBlock Text="One rigid shift per source; never reorders events or adds tracks" FontSize="10" Foreground="#8B92A5"/>
+                    </StackPanel>
+                </CheckBox>
             </StackPanel>
         </Border>
 
