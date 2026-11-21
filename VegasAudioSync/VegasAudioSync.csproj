@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <LangVersion>8.0</LangVersion>
+    <RootNamespace>VegasAudioSync</RootNamespace>
+    <AssemblyName>TellTale_Audiosync</AssemblyName>
+    <Version>1.3.1</Version>
+    <FileVersion>1.3.1.0</FileVersion>
+    <OutputType>Library</OutputType>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <!-- Default VEGAS Pro installation path; override via: dotnet build -p:VegasInstallDir="C:\Custom\Path" -->
+    <VegasInstallDir Condition="'$(VegasInstallDir)' == '' And Exists('C:\Program Files\BorisFX\Vegas Pro 2027')">C:\Program Files\BorisFX\Vegas Pro 2027</VegasInstallDir>
+    <VegasInstallDir Condition="'$(VegasInstallDir)' == '' And Exists('C:\Program Files\VEGAS\VEGAS Pro 22.0')">C:\Program Files\VEGAS\VEGAS Pro 22.0</VegasInstallDir>
+    <VegasInstallDir Condition="'$(VegasInstallDir)' == '' And Exists('C:\Program Files\VEGAS\VEGAS Pro 21.0')">C:\Program Files\VEGAS\VEGAS Pro 21.0</VegasInstallDir>
+    <VegasInstallDir Condition="'$(VegasInstallDir)' == '' And Exists('C:\Program Files\VEGAS\VEGAS Pro 20.0')">C:\Program Files\VEGAS\VEGAS Pro 20.0</VegasInstallDir>
+    <VegasInstallDir Condition="'$(VegasInstallDir)' == '' And Exists('C:\Program Files\VEGAS\VEGAS Pro 19.0')">C:\Program Files\VEGAS\VEGAS Pro 19.0</VegasInstallDir>
+    <VegasInstallDir Condition="'$(VegasInstallDir)' == ''">C:\Program Files\BorisFX\Vegas Pro 2027</VegasInstallDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Private="False" ensures ScriptPortal.Vegas.dll is NEVER copied into the extension output folder,
+         preventing type-identity collisions with the host VEGAS Pro process. -->
+    <Reference Include="ScriptPortal.Vegas">
+      <HintPath>$(VegasInstallDir)\ScriptPortal.Vegas.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Runtime.Serialization" />
+    <Reference Include="System.Xml" />
+  </ItemGroup>
+
+  <!-- Copy native Rust DLL into target directory -->
+  <ItemGroup>
+    <None Include="..\vegas_sync_core\target\release\telltale_sync_core.dll" Condition="Exists('..\vegas_sync_core\target\release\telltale_sync_core.dll')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>telltale_sync_core.dll</Link>
+    </None>
+  </ItemGroup>
+
+  <!-- Automatically deploy compiled DLLs to VEGAS Pro Application Extensions folder after build.
+       Set SkipDeployToVegas=true to build without installing into VEGAS. -->
+  <Target Name="DeployToVegasExtensions" AfterTargets="Build" Condition="'$(SkipDeployToVegas)' != 'true'">
+    <PropertyGroup>
+      <VegasTargetDir1>C:\ProgramData\Vegas Pro\2027.0\Application Extensions</VegasTargetDir1>
+      <VegasTargetDir2>C:\ProgramData\VEGAS Pro\2027.0\Application Extensions</VegasTargetDir2>
+    </PropertyGroup>
+    
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(VegasTargetDir1)" Condition="Exists('$(VegasTargetDir1)')" SkipUnchangedFiles="false" ContinueOnError="WarnAndContinue" />
+    <Copy SourceFiles="..\vegas_sync_core\target\release\telltale_sync_core.dll" DestinationFolder="$(VegasTargetDir1)" Condition="Exists('$(VegasTargetDir1)') And Exists('..\vegas_sync_core\target\release\telltale_sync_core.dll')" SkipUnchangedFiles="false" ContinueOnError="WarnAndContinue" />
+
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(VegasTargetDir2)" Condition="Exists('$(VegasTargetDir2)')" SkipUnchangedFiles="false" ContinueOnError="WarnAndContinue" />
+    <Copy SourceFiles="..\vegas_sync_core\target\release\telltale_sync_core.dll" DestinationFolder="$(VegasTargetDir2)" Condition="Exists('$(VegasTargetDir2)') And Exists('..\vegas_sync_core\target\release\telltale_sync_core.dll')" SkipUnchangedFiles="false" ContinueOnError="WarnAndContinue" />
+  </Target>
+
+</Project>

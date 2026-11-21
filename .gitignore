@@ -1,0 +1,12 @@
+vegas_sync_core/
+VegasAudioSync/bin/
+VegasAudioSync/obj/
+TestHarness/bin/
+TestHarness/obj/
+Installer/Output/
+*.exe
+*.msi
+*.wixpdb
+*.zip
+*.pdb
+*_key_backup.reg

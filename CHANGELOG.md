@@ -1,0 +1,54 @@
+# TellTale WaveSync — Change Summary
+
+## Capacity & Performance
+
+- **Built for 1,000+ camera clips on one timeline.** Events are analyzed in small parallel batches (max 4 workers), and every decoded buffer is released as soon as its event is resolved, so memory stays flat instead of growing with the project size.
+- **Validated on a real wedding project:** 174 video events (167 Sony FX3 + 7 Sony AX100) plus 3 audio recorders, aligned against a **9 h 21 m** master recording in about **30 seconds**.
+- **Long takes never sit in RAM.** Anything over 5 minutes is streamed into a compact 125 Hz energy envelope (~4 MB per 2 hours of audio); only 30–600 s windows are ever materialized for sample-accurate refinement.
+- **Crossfade lane planner stress-tested** with 400 overlapping intervals, correctly producing the minimum possible number of lanes.
+
+## Stability & Progress
+
+- Fixed the **hard halt** on long takes: bounded FFT windows, streaming decode, drained FFmpeg stderr, flat memory, and cancellation.
+- FFmpeg child processes are launched with `CREATE_NO_WINDOW`; **no more console windows** (previously 1,000+ flashes on a large project).
+- Added a **Stop** button; cancellation aborts the native pipeline in well under a second.
+- Real progress for long decodes, per-event warnings, and a manifest that reports every skipped/unaligned event instead of aborting the run.
+- Missing FFmpeg is detected once per run instead of being retried per event.
+
+## Sync Engine
+
+- **Match validation (NCC):** every alignment is gated on normalized envelope correlation, so short/unrelated audio can no longer produce a sharp but meaningless GCC peak.
+- **Source-clock sync:** clips are grouped by media folder; continuous recording runs are reconstructed from file timestamps; a dominant camera clock is estimated from the longest reliable clips; every short clip is positioned from its recorded timestamp.
+- **Outlier correction:** a strong-but-wrong clip inside a continuous run is overridden so footage stays continuous.
+- **Recorded-time fallbacks:** clips without timestamps inherit a rigid group shift; weak matches are left unaligned (do-no-harm).
+- **Manual Master Anchor:** the dropdown lists every audio **and video** track with clip count and longest take; the selection survives Refresh; picking a video track auto-enables video-clip analysis.
+- **Negative timeline protection:** if sync would push content before 0, the whole synced block shifts right (logged).
+- **Idempotent re-runs:** identical results produce no movement, and existing “Sync Lane” tracks are reused instead of duplicated.
+
+## Timeline Editing
+
+- **Crossfade protection:** overlapping synced events are spread onto extra tracks of the correct type — **video lanes for video events** (which keep their own audio), **audio lanes for audio-only events** — so VEGAS never inserts unintended crossfades.
+- Untouched clips are **pinned** to their original track, preserving intentional edits.
+- New lanes copy the source track's name, mute/solo, bus, effect chain, and envelope automation.
+- Lane moves are verified (`ev.Track.Index`), capped, and happen inside the same **UndoBlock** — one Ctrl+Z reverts the moves and the added lanes.
+- Video-track clips are now analyzed through their embedded scratch audio (optional toggle).
+
+## Long-Take / Wedding Workflow
+
+- Whole-take handling: long recorder takes are moved as a single event and keep their full length.
+- Master analysis ceiling raised to 12 hours (a 9 h 21 m take is now fully covered).
+- Source groups and recorded timestamps handle 2–5 second clips that are impossible to align in isolation.
+- Master anchor is logged as `Master reference (selected track | auto): Event / file / duration`, so the operator can verify exactly what was used.
+
+## UI
+
+- Modern dark panel retained; added **Include Video Clip Audio (Multicam)**, **Prevent Crossfades (Auto-Add Tracks)**, and **Stop**.
+- Master Anchor now shows `[A]/[V] track — clip count — longest take` with full tooltips.
+- Per-event log lines include method, drift, confidence and NCC score.
+- Updated installer, README, handover notes, and showcase screenshot.
+
+## Packaging
+
+- `TellTale_WaveSync_Setup_v1.3.1.exe`
+- Native engine `telltale_sync_core.dll` v0.2.0; extension `TellTale_Audiosync.dll` v1.3.1.
+- 30 Rust tests + harness checks for long takes, source clocks, crossfade lanes, and cancellation.

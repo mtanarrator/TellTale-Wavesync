@@ -1,0 +1,1148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TellTale WaveSync - VEGAS Pro Presentation Guide</title>
+  <style>
+    /* VEGAS PRO BRAND PALETTE & PRESENTATION STYLING - ZERO EXTERNAL DEPENDENCIES (100% OFFLINE EDGE COMPATIBLE) */
+    :root {
+      --vegas-bg: #141416;
+      --vegas-panel: #1A1A1E;
+      --vegas-card: #202026;
+      --vegas-border: #2E2E38;
+      --vegas-border-hover: #404050;
+      --vegas-blue: #0082FC;
+      --vegas-blue-glow: rgba(0, 130, 252, 0.4);
+      --vegas-cyan: #00D2FF;
+      --vegas-amber: #FF9900;
+      --vegas-red: #E53935;
+      --vegas-green: #00E676;
+      --vegas-text: #EAEAEA;
+      --vegas-text-muted: #8E8E98;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: var(--vegas-bg); color: var(--vegas-text); font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif; }
+
+    /* Main Presentation Frame */
+    #deck-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: radial-gradient(circle at 50% 30%, #1A1A22 0%, #121215 100%);
+    }
+
+    /* Top VEGAS-style Header Bar */
+    header {
+      height: 56px;
+      background: #18181D;
+      border-bottom: 1px solid var(--vegas-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      z-index: 50;
+      flex-shrink: 0;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .vegas-badge {
+      background: #0082FC;
+      color: #FFF;
+      font-weight: 800;
+      font-size: 11px;
+      letter-spacing: 1.5px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      box-shadow: 0 0 10px rgba(0, 130, 252, 0.4);
+    }
+
+    .brand-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: #FFF;
+      letter-spacing: 0.5px;
+    }
+
+    .brand-subtitle {
+      font-size: 12px;
+      color: var(--vegas-text-muted);
+      margin-left: 6px;
+      font-weight: 400;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .btn {
+      background: #25252C;
+      color: #DDD;
+      border: 1px solid #383844;
+      border-radius: 5px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+    .btn:hover { background: #32323C; border-color: var(--vegas-blue); color: #FFF; }
+    .btn-blue { background: var(--vegas-blue); border-color: #3399FF; color: #FFF; box-shadow: 0 0 12px var(--vegas-blue-glow); }
+    .btn-blue:hover { background: #1A90FF; }
+
+    /* Slide Stage (Takes all remaining viewport) */
+    #slide-stage {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px 24px;
+    }
+
+    /* Individual Slide View */
+    .slide {
+      position: absolute;
+      top: 16px;
+      bottom: 16px;
+      left: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      background: var(--vegas-panel);
+      border: 1px solid var(--vegas-border);
+      border-radius: 12px;
+      overflow: hidden;
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.98);
+      transition: opacity 0.35s ease, transform 0.35s ease;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+    }
+
+    .slide.active {
+      opacity: 1;
+      pointer-events: auto;
+      transform: scale(1);
+    }
+
+    /* Slide Header Area */
+    .slide-info-bar {
+      padding: 18px 24px 12px 24px;
+      background: #1E1E24;
+      border-bottom: 1px solid var(--vegas-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      flex-shrink: 0;
+    }
+
+    .slide-number-pill {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: var(--vegas-blue);
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .slide-heading {
+      font-size: 22px;
+      font-weight: 700;
+      color: #FFFFFF;
+    }
+
+    .slide-desc {
+      font-size: 13.5px;
+      color: var(--vegas-text-muted);
+      margin-top: 4px;
+      max-w: 800px;
+      line-height: 1.45;
+    }
+
+    .slide-badge {
+      background: #141418;
+      border: 1px solid #33333F;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 12px;
+      color: var(--vegas-cyan);
+      white-space: nowrap;
+    }
+
+    /* Canvas Animation Container */
+    .canvas-container {
+      flex: 1;
+      position: relative;
+      background: #111114;
+      overflow: hidden;
+      width: 100%;
+    }
+
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Slide Bottom Bar with Interactive Controls */
+    .slide-bottom-bar {
+      height: 60px;
+      background: #1A1A20;
+      border-top: 1px solid var(--vegas-border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .interactive-controls {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .slider-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--vegas-text-muted);
+    }
+    .slider-wrap input[type=range] {
+      width: 140px;
+      accent-color: var(--vegas-blue);
+      cursor: pointer;
+    }
+
+    .takeaway-tag {
+      font-size: 12px;
+      color: var(--vegas-text-muted);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .takeaway-tag strong { color: #FFF; }
+
+    /* Bottom Presentation Navigation Bar */
+    footer {
+      height: 52px;
+      background: #16161A;
+      border-top: 1px solid var(--vegas-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      z-index: 50;
+      flex-shrink: 0;
+    }
+
+    .nav-dots {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .dot {
+      width: 28px;
+      height: 28px;
+      border-radius: 5px;
+      background: #23232B;
+      border: 1px solid #33333F;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--vegas-text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .dot:hover { background: #2E2E3A; color: #FFF; }
+    .dot.active {
+      background: var(--vegas-blue);
+      border-color: #3399FF;
+      color: #FFF;
+      box-shadow: 0 0 10px var(--vegas-blue-glow);
+    }
+
+    .nav-buttons {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .key-hint {
+      font-size: 11px;
+      color: #6A6A76;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    kbd {
+      background: #25252D;
+      border: 1px solid #3E3E4C;
+      border-radius: 3px;
+      padding: 2px 6px;
+      font-family: monospace;
+      font-size: 10px;
+      color: #BBB;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="deck-container">
+
+    <!-- Header Bar -->
+    <header>
+      <div class="brand-group">
+        <span class="vegas-badge">VEGAS PRO</span>
+        <span class="brand-title">TellTale WaveSync</span>
+        <span class="brand-subtitle">Interactive Presentation Deck</span>
+      </div>
+
+      <div class="header-controls">
+        <button id="btnAutoPlay" class="btn" title="Automatically advance slides">▶ Auto-Play (8s)</button>
+        <button id="btnToggleAnim" class="btn">⏸ Pause Graphics</button>
+        <button id="btnFullscreen" class="btn btn-blue">⛶ Maximize Fullscreen</button>
+      </div>
+    </header>
+
+    <!-- Slide Stage -->
+    <main id="slide-stage">
+
+      <!-- SLIDE 1: Clock Drift -->
+      <article class="slide active" id="slide-0">
+        <div class="slide-info-bar">
+          <div>
+            <div class="slide-number-pill">Feature 01 of 06 • Temporal Drift</div>
+            <h2 class="slide-heading">Clock Drift Correction (RANSAC PPM)</h2>
+            <p class="slide-desc">Cameras and field recorders have independent quartz oscillators that run at slightly different clock speeds. WaveSync measures the micro-drift in parts-per-million and smoothly resamples playback speed.</p>
+          </div>
+          <span class="slide-badge" id="badge-drift">+45.0 PPM SLIPPAGE</span>
+        </div>
+        <div class="canvas-container">
+          <canvas id="cv-drift"></canvas>
+        </div>
+        <div class="slide-bottom-bar">
+          <div class="interactive-controls">
+            <div class="slider-wrap">
+              <span>Drift Rate:</span>
+              <input type="range" id="sl-drift" min="0" max="150" value="45">
+              <span id="lbl-drift" style="color:#FFF; font-family:monospace;">+45 PPM</span>
+            </div>
+            <button id="btn-fix-drift" class="btn btn-blue">⚡ Snap RANSAC Correction</button>
+          </div>
+          <div class="takeaway-tag">
+            Editor Takeaway: <strong>Takes stay locked from 00:00 all the way to 60:00+ minutes.</strong>
+          </div>
+        </div>
+      </article>
+
+      <!-- SLIDE 2: Sub-Sample Phase Super-Resolution -->
+      <article class="slide" id="slide-1">
+        <div class="slide-info-bar">
+          <div>
+            <div class="slide-number-pill">Feature 02 of 06 • Acoustic Phase Lock</div>
+            <h2 class="slide-heading">Sub-Sample Super-Resolution Alignment</h2>
+            <p class="slide-desc">Video frames (~33ms) are far too coarse for sound. When multiple mics capture the same voice even 5ms apart, playing them together causes hollow phase cancellation (comb filtering). WaveSync fits peaks down to &lt; 0.1 samples.</p>
+          </div>
+          <span class="slide-badge" id="badge-phase">PARABOLIC FIT: ACTIVE</span>
+        </div>
+        <div class="canvas-container">
+          <canvas id="cv-phase"></canvas>
+        </div>
+        <div class="slide-bottom-bar">
+          <div class="interactive-controls">
+            <div class="slider-wrap">
+              <span>Fractional Offset:</span>
+              <input type="range" id="sl-phase" min="-100" max="100" value="0">
+              <span id="lbl-phase" style="color:#FFF; font-family:monospace;">0.00 Samples</span>
+            </div>
+            <button id="btn-lock-phase" class="btn btn-blue">🎯 Lock Sub-Sample Apex</button>
+          </div>
+          <div class="takeaway-tag">
+            Editor Takeaway: <strong>Full, punchy dialogue with zero tinny comb-filtering echo.</strong>
+          </div>
+        </div>
+      </article>
+
+      <!-- SLIDE 3: Dropped-Frame Auto-Slicing -->
+      <article class="slide" id="slide-2">
+        <div class="slide-info-bar">
+          <div>
+            <div class="slide-number-pill">Feature 03 of 06 • Glitch Recovery</div>
+            <h2 class="slide-heading">Dropped-Frame Auto-Slicing (VFR Repair)</h2>
+            <p class="slide-desc">Overheating mirrorless cameras and smartphones (Variable Frame Rate) randomly drop frames mid-take. Aligning the start throws the rest out of sync. WaveSync spots the exact step-jump, slices the event, and re-syncs both halves.</p>
+          </div>
+          <span class="slide-badge" id="badge-slice">STEP DETECTOR: 50ms</span>
+        </div>
+        <div class="canvas-container">
+          <canvas id="cv-slice"></canvas>
+        </div>
+        <div class="slide-bottom-bar">
+          <div class="interactive-controls">
+            <button id="btn-trigger-slice" class="btn btn-blue">✂ Simulate Frame Drop &amp; Auto-Blade</button>
+            <button id="btn-reset-slice" class="btn">↺ Reset Take</button>
+          </div>
+          <div class="takeaway-tag">
+            Editor Takeaway: <strong>No tedious manual blade cuts when dealing with phone footage.</strong>
+          </div>
+        </div>
+      </article>
+
+      <!-- SLIDE 4: Speed of Sound Latency -->
+      <article class="slide" id="slide-3">
+        <div class="slide-info-bar">
+          <div>
+            <div class="slide-number-pill">Feature 04 of 06 • Physical Acoustics</div>
+            <h2 class="slide-heading">Acoustic Speed-of-Sound Offset (343 m/s)</h2>
+            <p class="slide-desc">Sound travels through air at approximately 1 ms per foot. A camera 30 feet away records dialogue 30ms later than the speaker's chest mic. WaveSync compensates for this air travel distance so pictures stay glued to dialogue.</p>
+          </div>
+          <span class="slide-badge" id="badge-sound">AIR DELAY: 30 ms</span>
+        </div>
+        <div class="canvas-container">
+          <canvas id="cv-sound"></canvas>
+        </div>
+        <div class="slide-bottom-bar">
+          <div class="interactive-controls">
+            <div class="slider-wrap">
+              <span>Camera Distance:</span>
+              <input type="range" id="sl-dist" min="5" max="80" value="30">
+              <span id="lbl-dist" style="color:#FFF; font-family:monospace;">30 ft (30ms)</span>
+            </div>
+            <button id="btn-comp-sound" class="btn btn-blue">🔊 Toggle Distance Compensation</button>
+          </div>
+          <div class="takeaway-tag">
+            Editor Takeaway: <strong>Flawless lip sync for wide cameras placed far away.</strong>
+          </div>
+        </div>
+      </article>
+
+      <!-- SLIDE 5: Selected Takes Scope -->
+      <article class="slide" id="slide-4">
+        <div class="slide-info-bar">
+          <div>
+            <div class="slide-number-pill">Feature 05 of 06 • Timeline Safety</div>
+            <h2 class="slide-heading">Scope: Selected Takes &amp; Tracks Only</h2>
+            <p class="slide-desc">On massive timelines with hundreds of clips, you often just want to align two specific takes without disturbing surrounding edits. WaveSync places an isolation shield on unselected tracks so only active items move.</p>
+          </div>
+          <span class="slide-badge" id="badge-scope">SURGICAL MODE</span>
+        </div>
+        <div class="canvas-container">
+          <canvas id="cv-scope"></canvas>
+        </div>
+        <div class="slide-bottom-bar">
+          <div class="interactive-controls">
+            <button id="btn-toggle-scope" class="btn btn-blue">⇄ Switch: Surgical vs. Global Project Sync</button>
+          </div>
+          <div class="takeaway-tag">
+            Editor Takeaway: <strong>Safe to run in the middle of complex, delicate timeline cuts.</strong>
+          </div>
+        </div>
+      </article>
+
+      <!-- SLIDE 6: Master Reference Anchor -->
+      <article class="slide" id="slide-5">
+        <div class="slide-info-bar">
+          <div>
+            <div class="slide-number-pill">Feature 06 of 06 • Timeline Pivot</div>
+            <h2 class="slide-heading">Master Reference Anchor (T0 Ground Truth)</h2>
+            <p class="slide-desc">The master reference is the bedrock of the sync topology. The master take never moves on the timeline; all secondary cameras and audio takes slide left or right on rails to lock into its acoustic coordinates.</p>
+          </div>
+          <span class="slide-badge" style="color:var(--vegas-amber);">⚓ MASTER LOCKED AT T0</span>
+        </div>
+        <div class="canvas-container">
+          <canvas id="cv-anchor"></canvas>
+        </div>
+        <div class="slide-bottom-bar">
+          <div class="interactive-controls">
+            <button id="btn-snap-anchor" class="btn btn-blue">🧲 Snap Auxiliary Cameras to Master</button>
+            <button id="btn-reset-anchor" class="btn">↺ Unlink Clocks</button>
+          </div>
+          <div class="takeaway-tag">
+            Editor Takeaway: <strong>Your primary Sound Devices boom take never budges.</strong>
+          </div>
+        </div>
+      </article>
+
+    </main>
+
+    <!-- Bottom Navigation Footer -->
+    <footer>
+      <div class="key-hint">
+        <span>Navigate:</span>
+        <kbd>←</kbd> <kbd>→</kbd> or <kbd>Space</kbd>
+        <span style="margin-left:8px;">Fullscreen:</span>
+        <kbd>F</kbd>
+      </div>
+
+      <div class="nav-dots">
+        <div class="dot active" data-index="0">1</div>
+        <div class="dot" data-index="1">2</div>
+        <div class="dot" data-index="2">3</div>
+        <div class="dot" data-index="3">4</div>
+        <div class="dot" data-index="4">5</div>
+        <div class="dot" data-index="5">6</div>
+      </div>
+
+      <div class="nav-buttons">
+        <button id="btnPrev" class="btn">◀ Previous</button>
+        <button id="btnNext" class="btn btn-blue">Next Slide ▶</button>
+      </div>
+    </footer>
+
+  </div>
+
+  <script>
+    /* ====================================================================
+       PRESENTATION DECK LOGIC (100% STANDALONE, EDGE & CHROME CERTIFIED)
+       ==================================================================== */
+    let currentSlide = 0;
+    const totalSlides = 6;
+    let autoPlayTimer = null;
+    let isAutoPlay = false;
+    let isPaused = false;
+    let animTime = 0;
+    let lastTime = performance.now();
+
+    const slides = document.querySelectorAll('.slide');
+    const dots = document.querySelectorAll('.dot');
+
+    function showSlide(index) {
+      if (index < 0) index = totalSlides - 1;
+      if (index >= totalSlides) index = 0;
+
+      slides.forEach(s => s.classList.remove('active'));
+      dots.forEach(d => d.classList.remove('active'));
+
+      currentSlide = index;
+      slides[currentSlide].classList.add('active');
+      dots[currentSlide].classList.add('active');
+
+      // Trigger instant resize of the canvas on the newly active slide
+      resizeAllCanvases();
+    }
+
+    document.getElementById('btnNext').addEventListener('click', () => showSlide(currentSlide + 1));
+    document.getElementById('btnPrev').addEventListener('click', () => showSlide(currentSlide - 1));
+
+    dots.forEach(dot => {
+      dot.addEventListener('click', () => {
+        showSlide(parseInt(dot.getAttribute('data-index')));
+      });
+    });
+
+    // Keyboard Shortcuts
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
+        e.preventDefault();
+        showSlide(currentSlide + 1);
+      } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+        e.preventDefault();
+        showSlide(currentSlide - 1);
+      } else if (e.key === 'f' || e.key === 'F') {
+        toggleFullscreen();
+      } else if (e.key === 'p' || e.key === 'P') {
+        toggleAnimationPause();
+      }
+    });
+
+    // Auto Play Toggle
+    const btnAutoPlay = document.getElementById('btnAutoPlay');
+    btnAutoPlay.addEventListener('click', () => {
+      isAutoPlay = !isAutoPlay;
+      if (isAutoPlay) {
+        btnAutoPlay.textContent = '⏹ Stop Auto-Play';
+        btnAutoPlay.classList.add('btn-blue');
+        autoPlayTimer = setInterval(() => {
+          showSlide(currentSlide + 1);
+        }, 8000);
+      } else {
+        btnAutoPlay.textContent = '▶ Auto-Play (8s)';
+        btnAutoPlay.classList.remove('btn-blue');
+        clearInterval(autoPlayTimer);
+      }
+    });
+
+    // Fullscreen Toggle (Standard HTML5 Fullscreen API with Edge/WebKit prefix fallbacks)
+    const btnFullscreen = document.getElementById('btnFullscreen');
+    function toggleFullscreen() {
+      const doc = document.documentElement;
+      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        if (doc.requestFullscreen) doc.requestFullscreen();
+        else if (doc.webkitRequestFullscreen) doc.webkitRequestFullscreen();
+        btnFullscreen.textContent = '✕ Exit Fullscreen';
+      } else {
+        if (document.exitFullscreen) document.exitFullscreen();
+        else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        btnFullscreen.textContent = '⛶ Maximize Fullscreen';
+      }
+    }
+    btnFullscreen.addEventListener('click', toggleFullscreen);
+
+    // Pause Animations
+    const btnToggleAnim = document.getElementById('btnToggleAnim');
+    function toggleAnimationPause() {
+      isPaused = !isPaused;
+      btnToggleAnim.textContent = isPaused ? '▶ Resume Graphics' : '⏸ Pause Graphics';
+    }
+    btnToggleAnim.addEventListener('click', toggleAnimationPause);
+
+
+    /* ====================================================================
+       HIGH-PERFORMANCE VEGAS GRAPHICS ENGINE (CANVAS 2D 60FPS)
+       ==================================================================== */
+    function setupCanvas(id) {
+      const cv = document.getElementById(id);
+      const ctx = cv.getContext('2d');
+      return { cv, ctx, width: 800, height: 400 };
+    }
+
+    const c1 = setupCanvas('cv-drift');
+    const c2 = setupCanvas('cv-phase');
+    const c3 = setupCanvas('cv-slice');
+    const c4 = setupCanvas('cv-sound');
+    const c5 = setupCanvas('cv-scope');
+    const c6 = setupCanvas('cv-anchor');
+
+    function resizeCanvas(cObj) {
+      const parent = cObj.cv.parentElement;
+      if (!parent) return;
+      const w = parent.clientWidth || 800;
+      const h = parent.clientHeight || 400;
+      const dpr = window.devicePixelRatio || 1;
+
+      if (cObj.cv.width !== w * dpr || cObj.cv.height !== h * dpr) {
+        cObj.cv.width = w * dpr;
+        cObj.cv.height = h * dpr;
+      }
+      cObj.width = w;
+      cObj.height = h;
+      cObj.ctx.resetTransform ? cObj.ctx.resetTransform() : cObj.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      cObj.ctx.scale(dpr, dpr);
+    }
+
+    function resizeAllCanvases() {
+      resizeCanvas(c1);
+      resizeCanvas(c2);
+      resizeCanvas(c3);
+      resizeCanvas(c4);
+      resizeCanvas(c5);
+      resizeCanvas(c6);
+    }
+    window.addEventListener('resize', resizeAllCanvases);
+
+
+    /* --------------------------------------------------------------------
+       SLIDE 1: CLOCK DRIFT SIMULATION
+       -------------------------------------------------------------------- */
+    let driftPpm = 45;
+    let isRansacSnapped = false;
+    const slDrift = document.getElementById('sl-drift');
+    const lblDrift = document.getElementById('lbl-drift');
+    const badgeDrift = document.getElementById('badge-drift');
+
+    slDrift.addEventListener('input', (e) => {
+      driftPpm = parseFloat(e.target.value);
+      lblDrift.textContent = `+${driftPpm} PPM`;
+      badgeDrift.textContent = `+${driftPpm.toFixed(1)} PPM SLIPPAGE`;
+      isRansacSnapped = false;
+    });
+
+    document.getElementById('btn-fix-drift').addEventListener('click', () => {
+      isRansacSnapped = true;
+      badgeDrift.textContent = '✓ 0.0 PPM (RANSAC LOCKED)';
+      badgeDrift.style.color = 'var(--vegas-green)';
+    });
+
+    function drawDrift(t) {
+      const { ctx, width, height } = c1;
+      ctx.clearRect(0, 0, width, height);
+
+      // VEGAS Timeline Grid Lines
+      ctx.strokeStyle = '#222228';
+      ctx.lineWidth = 1;
+      const cols = 12;
+      for (let i = 0; i < cols; i++) {
+        const x = (width / cols) * i;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+
+      // Track 1 Header Badge (Master Audio)
+      ctx.fillStyle = '#1B1B22';
+      ctx.fillRect(15, 20, 140, 26);
+      ctx.strokeStyle = '#333340';
+      ctx.strokeRect(15, 20, 140, 26);
+      ctx.fillStyle = '#0082FC';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillText("TRACK 1: MASTER (A-CAM)", 24, 37);
+
+      // Track 1 Waveform (Stationary Reference)
+      const y1 = height * 0.32;
+      ctx.beginPath();
+      ctx.strokeStyle = '#0082FC';
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = 'rgba(0, 130, 252, 0.5)';
+      ctx.shadowBlur = 10;
+      for (let x = 160; x < width - 20; x++) {
+        const phase = (x * 0.04) - (t * 2.5);
+        const y = y1 + Math.sin(phase) * 22 + Math.sin(phase * 2.2) * 10;
+        if (x === 160) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Track 2 Header Badge (Secondary Audio)
+      ctx.fillStyle = '#1B1B22';
+      ctx.fillRect(15, height * 0.60, 140, 26);
+      ctx.strokeRect(15, height * 0.60, 140, 26);
+      ctx.fillStyle = isRansacSnapped ? 'var(--vegas-green)' : 'var(--vegas-amber)';
+      ctx.fillText(isRansacSnapped ? "TRACK 2: RESAMPLED" : "TRACK 2: DRIFTING", 24, height * 0.60 + 17);
+
+      // Track 2 Waveform (Stretched by PPM)
+      const y2 = height * 0.75;
+      const effectivePpm = isRansacSnapped ? 0 : driftPpm;
+      const stretchFactor = 1.0 + (effectivePpm * 0.0035);
+
+      ctx.beginPath();
+      ctx.strokeStyle = isRansacSnapped ? '#00E676' : '#FF9900';
+      ctx.lineWidth = 2.2;
+      ctx.shadowColor = isRansacSnapped ? 'rgba(0, 230, 118, 0.4)' : 'rgba(255, 153, 0, 0.4)';
+      ctx.shadowBlur = 8;
+      for (let x = 160; x < width - 20; x++) {
+        const phase = (x * 0.04 * stretchFactor) - (t * 2.5);
+        const y = y2 + Math.sin(phase) * 22 + Math.sin(phase * 2.2) * 10;
+        if (x === 160) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Divergence measurement bracket on timeline right side
+      if (!isRansacSnapped && driftPpm > 10) {
+        const bx = width - 40;
+        ctx.strokeStyle = '#E53935';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(bx, y1 - 25);
+        ctx.lineTo(bx, y2 + 25);
+        ctx.stroke();
+
+        ctx.fillStyle = '#E53935';
+        ctx.font = 'bold 11px monospace';
+        ctx.fillText(`+${(driftPpm * 1.8).toFixed(0)}ms DRIFT`, bx - 85, (y1 + y2) / 2);
+      }
+    }
+
+
+    /* --------------------------------------------------------------------
+       SLIDE 2: SUB-SAMPLE SUPER-RESOLUTION
+       -------------------------------------------------------------------- */
+    let subSampleOffset = 0.0;
+    const slPhase = document.getElementById('sl-phase');
+    const lblPhase = document.getElementById('lbl-phase');
+    const badgePhase = document.getElementById('badge-phase');
+
+    slPhase.addEventListener('input', (e) => {
+      subSampleOffset = parseFloat(e.target.value) / 100.0;
+      lblPhase.textContent = `${subSampleOffset.toFixed(2)} Samples`;
+      const comb = Math.abs(Math.cos(subSampleOffset * Math.PI * 0.5));
+      badgePhase.textContent = comb > 0.8 ? "PHASE: CONSTRUCTIVE" : "PHASE: COMB CANCELLATION ✗";
+      badgePhase.style.color = comb > 0.8 ? "var(--vegas-green)" : "var(--vegas-red)";
+    });
+
+    document.getElementById('btn-lock-phase').addEventListener('click', () => {
+      subSampleOffset = 0.0;
+      slPhase.value = 0;
+      lblPhase.textContent = "0.00 Samples";
+      badgePhase.textContent = "✓ PARABOLIC APEX LOCKED";
+      badgePhase.style.color = "var(--vegas-green)";
+    });
+
+    function drawPhase(t) {
+      const { ctx, width, height } = c2;
+      ctx.clearRect(0, 0, width, height);
+
+      // Draw Coarse VEGAS Video Frame Columns
+      const frameW = 120;
+      ctx.lineWidth = 1;
+      for (let x = 40; x < width; x += frameW) {
+        ctx.fillStyle = '#17171D';
+        ctx.fillRect(x, 15, frameW - 8, height - 30);
+        ctx.strokeStyle = '#292934';
+        ctx.strokeRect(x, 15, frameW - 8, height - 30);
+        ctx.fillStyle = '#5A5A6A';
+        ctx.font = '10px monospace';
+        ctx.fillText(`FRAME ${(x / frameW + 100).toFixed(0)}`, x + 10, 32);
+      }
+
+      // Summed Oscilloscope Center Wave
+      const midY = height * 0.55;
+      const combPhase = subSampleOffset * Math.PI;
+      const constructive = Math.abs(Math.cos(combPhase * 0.5));
+
+      ctx.beginPath();
+      ctx.strokeStyle = constructive > 0.75 ? '#00E676' : (constructive > 0.35 ? '#FF9900' : '#E53935');
+      ctx.lineWidth = 3;
+      ctx.shadowColor = ctx.strokeStyle;
+      ctx.shadowBlur = 12;
+
+      for (let x = 40; x < width - 40; x++) {
+        const waveT = (x * 0.07) - (t * 3.5);
+        const w1 = Math.sin(waveT);
+        const w2 = Math.sin(waveT + combPhase);
+        const sum = (w1 + w2) * 0.5;
+        const y = midY + sum * (height * 0.32);
+        if (x === 40) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Parabolic Interpolation Apex Dot
+      const apexX = width * 0.5;
+      ctx.fillStyle = '#00E676';
+      ctx.beginPath();
+      ctx.arc(apexX, midY - constructive * (height * 0.32), 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+
+    /* --------------------------------------------------------------------
+       SLIDE 3: DROPPED FRAME SLICING
+       -------------------------------------------------------------------- */
+    let isGlitchCut = false;
+    const badgeSlice = document.getElementById('badge-slice');
+
+    document.getElementById('btn-trigger-slice').addEventListener('click', () => {
+      isGlitchCut = true;
+      badgeSlice.textContent = '✓ AUTO-SLICED AT DISCONTINUITY';
+      badgeSlice.style.color = 'var(--vegas-green)';
+    });
+    document.getElementById('btn-reset-slice').addEventListener('click', () => {
+      isGlitchCut = false;
+      badgeSlice.textContent = 'STEP DETECTOR: 50ms';
+      badgeSlice.style.color = 'var(--vegas-cyan)';
+    });
+
+    function drawSlice(t) {
+      const { ctx, width, height } = c3;
+      ctx.clearRect(0, 0, width, height);
+
+      // Track 1: Master (Solid)
+      const t1Y = height * 0.22;
+      ctx.fillStyle = '#1A2233';
+      ctx.strokeStyle = '#0082FC';
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(40, t1Y, width - 80, 36);
+      ctx.strokeRect(40, t1Y, width - 80, 36);
+      ctx.fillStyle = '#FFF';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillText("TRACK 1: CONTINUOUS RECORDING", 55, t1Y + 22);
+
+      // Track 2: VFR Camera Event
+      const t2Y = height * 0.58;
+      const cutX = width * 0.52;
+
+      if (!isGlitchCut) {
+        // Continuous block with desynced tail
+        ctx.fillStyle = '#261F22';
+        ctx.strokeStyle = '#E53935';
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(40, t2Y, width - 80, 36);
+        ctx.strokeRect(40, t2Y, width - 80, 36);
+
+        ctx.fillStyle = '#E53935';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText("PART 1 (SYNCED)", 60, t2Y + 22);
+        ctx.fillText("PART 2 (DESYNCED BY DROPPED FRAMES)", cutX + 20, t2Y + 22);
+
+        // Discontinuity warning pulse
+        ctx.strokeStyle = '#E53935';
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(cutX, t2Y - 10);
+        ctx.lineTo(cutX, t2Y + 46);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        // SEGMENT A
+        ctx.fillStyle = '#162820';
+        ctx.strokeStyle = '#00E676';
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(40, t2Y, cutX - 50, 36);
+        ctx.strokeRect(40, t2Y, cutX - 50, 36);
+        ctx.fillStyle = '#00E676';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillText("SEGMENT 1 ALIGNED", 60, t2Y + 22);
+
+        // SEGMENT B (Sliced and shifted back)
+        const gap = 20;
+        ctx.fillStyle = '#162820';
+        ctx.strokeStyle = '#00E676';
+        ctx.fillRect(cutX + gap, t2Y, (width - 60) - (cutX + gap), 36);
+        ctx.strokeRect(cutX + gap, t2Y, (width - 60) - (cutX + gap), 36);
+        ctx.fillText("SEGMENT 2 RE-ALIGNED ✓", cutX + gap + 20, t2Y + 22);
+
+        // Razor blade icon at cut
+        ctx.strokeStyle = '#FFF';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(cutX, t2Y - 14);
+        ctx.lineTo(cutX, t2Y + 50);
+        ctx.stroke();
+        ctx.fillStyle = '#00E676';
+        ctx.fillText("✂ VEGAS SPLIT", cutX - 35, t2Y - 18);
+      }
+    }
+
+
+    /* --------------------------------------------------------------------
+       SLIDE 4: SPEED OF SOUND AIR TRAVEL
+       -------------------------------------------------------------------- */
+    let cameraDist = 30;
+    let isSoundComp = false;
+    const slDist = document.getElementById('sl-dist');
+    const lblDist = document.getElementById('lbl-dist');
+    const badgeSound = document.getElementById('badge-sound');
+
+    slDist.addEventListener('input', (e) => {
+      cameraDist = parseFloat(e.target.value);
+      lblDist.textContent = `${cameraDist} ft (${cameraDist}ms)`;
+      badgeSound.textContent = `AIR DELAY: ${cameraDist} ms`;
+    });
+
+    document.getElementById('btn-comp-sound').addEventListener('click', () => {
+      isSoundComp = !isSoundComp;
+      const btn = document.getElementById('btn-comp-sound');
+      if (isSoundComp) {
+        btn.textContent = '✓ Distance Latency: COMPENSATED';
+        btn.classList.add('btn-blue');
+        badgeSound.textContent = 'LIP SYNC: SNAPPED TO VIDEO';
+        badgeSound.style.color = 'var(--vegas-green)';
+      } else {
+        btn.textContent = '🔊 Toggle Distance Compensation';
+        btn.classList.remove('btn-blue');
+        badgeSound.textContent = `AIR DELAY: ${cameraDist} ms`;
+        badgeSound.style.color = 'var(--vegas-cyan)';
+      }
+    });
+
+    function drawSound(t) {
+      const { ctx, width, height } = c4;
+      ctx.clearRect(0, 0, width, height);
+
+      const srcX = 80;
+      const srcY = height * 0.5;
+
+      // Actor Source Position
+      ctx.fillStyle = '#0082FC';
+      ctx.beginPath();
+      ctx.arc(srcX, srcY, 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#FFF';
+      ctx.font = 'bold 11px sans-serif';
+      ctx.fillText("ACTOR (LAV MIC)", srcX - 45, srcY + 28);
+      ctx.fillStyle = '#8E8E98';
+      ctx.fillText("Delay: 0.0ms", srcX - 25, srcY + 42);
+
+      // Acoustic Radiation Pressure Waves (343 m/s)
+      const waveSpeed = 80;
+      for (let i = 0; i < 6; i++) {
+        const r = ((t * waveSpeed + i * 50) % 360);
+        const alpha = Math.max(0, 1.0 - (r / 360));
+        ctx.strokeStyle = `rgba(0, 210, 255, ${alpha * 0.8})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(srcX, srcY, r, -Math.PI * 0.45, Math.PI * 0.45);
+        ctx.stroke();
+      }
+
+      // Far Camera Position
+      const maxDistFt = 80;
+      const camX = srcX + (cameraDist / maxDistFt) * (width - 200);
+      const camY = srcY;
+
+      // Camera Box
+      ctx.fillStyle = '#1D2536';
+      ctx.strokeStyle = isSoundComp ? '#00E676' : '#00D2FF';
+      ctx.lineWidth = 2;
+      ctx.fillRect(camX, camY - 16, 40, 32);
+      ctx.strokeRect(camX, camY - 16, 40, 32);
+
+      ctx.fillStyle = '#FFF';
+      ctx.fillText("WIDE CAM", camX - 10, camY + 30);
+      ctx.fillStyle = isSoundComp ? 'var(--vegas-green)' : 'var(--vegas-amber)';
+      ctx.fillText(isSoundComp ? "COMPENSATED" : `+${cameraDist}ms LAG`, camX - 14, camY + 44);
+    }
+
+
+    /* --------------------------------------------------------------------
+       SLIDE 5: SCOPE: SELECTED TAKES ONLY
+       -------------------------------------------------------------------- */
+    let isSurgicalScope = true;
+    const badgeScope = document.getElementById('badge-scope');
+
+    document.getElementById('btn-toggle-scope').addEventListener('click', () => {
+      isSurgicalScope = !isSurgicalScope;
+      badgeScope.textContent = isSurgicalScope ? 'SURGICAL MODE (ACTIVE)' : 'GLOBAL PROJECT SYNC';
+      badgeScope.style.color = isSurgicalScope ? 'var(--vegas-cyan)' : 'var(--vegas-amber)';
+    });
+
+    function drawScope(t) {
+      const { ctx, width, height } = c5;
+      ctx.clearRect(0, 0, width, height);
+
+      const tracks = [
+        { name: "Track 1: Main Boom", active: true, color: "#00E676", y: height * 0.15 },
+        { name: "Track 2: Camera A (Selected)", active: true, color: "#0082FC", y: height * 0.42 },
+        { name: "Track 3: Camera B (Unselected)", active: !isSurgicalScope, color: "#777785", y: height * 0.69 }
+      ];
+
+      tracks.forEach(tr => {
+        ctx.fillStyle = tr.active ? '#1A2338' : '#141418';
+        ctx.strokeStyle = tr.active ? tr.color : '#282834';
+        ctx.lineWidth = tr.active ? 2 : 1;
+        ctx.fillRect(50, tr.y, width - 100, 38);
+        ctx.strokeRect(50, tr.y, width - 100, 38);
+
+        ctx.fillStyle = tr.active ? '#FFFFFF' : '#5A5A66';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.fillText(tr.name, 70, tr.y + 24);
+
+        if (!tr.active) {
+          ctx.fillStyle = '#E53935';
+          ctx.fillText("🔒 FROZEN (SAFE)", width - 180, tr.y + 24);
+        } else {
+          ctx.fillStyle = tr.color;
+          ctx.fillText("★ SYNC TARGET", width - 170, tr.y + 24);
+        }
+      });
+
+      // Animated Sync Link Beam between Track 1 and Track 2
+      if (isSurgicalScope) {
+        ctx.strokeStyle = '#0082FC';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.lineDashOffset = -t * 20;
+        ctx.beginPath();
+        ctx.moveTo(width * 0.4, height * 0.15 + 38);
+        ctx.lineTo(width * 0.4, height * 0.42);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+
+    /* --------------------------------------------------------------------
+       SLIDE 6: MASTER ANCHOR PIVOT
+       -------------------------------------------------------------------- */
+    let isAnchorSnapped = false;
+    let camAShift = -40;
+    let camBShift = 60;
+
+    document.getElementById('btn-snap-anchor').addEventListener('click', () => {
+      isAnchorSnapped = true;
+    });
+    document.getElementById('btn-reset-anchor').addEventListener('click', () => {
+      isAnchorSnapped = false;
+      camAShift = -40;
+      camBShift = 60;
+    });
+
+    function drawAnchor(t) {
+      const { ctx, width, height } = c6;
+      ctx.clearRect(0, 0, width, height);
+
+      const anchorAxisX = width * 0.48;
+
+      // Vertical Master Axis
+      ctx.strokeStyle = 'var(--vegas-amber)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(anchorAxisX, 20);
+      ctx.lineTo(anchorAxisX, height - 20);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Master Take (Fixed at T0)
+      ctx.fillStyle = '#261F12';
+      ctx.strokeStyle = 'var(--vegas-amber)';
+      ctx.lineWidth = 2;
+      ctx.fillRect(anchorAxisX - 80, height * 0.18, 160, 40);
+      ctx.strokeRect(anchorAxisX - 80, height * 0.18, 160, 40);
+      ctx.fillStyle = 'var(--vegas-amber)';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.fillText("⚓ MASTER T0 (STATIONARY)", anchorAxisX - 70, height * 0.18 + 25);
+
+      // Camera 2 (Smooth slide to center)
+      if (isAnchorSnapped) camAShift += (0 - camAShift) * 0.12;
+      const c2X = anchorAxisX - 70 + camAShift;
+      ctx.fillStyle = '#17243A';
+      ctx.strokeStyle = '#0082FC';
+      ctx.lineWidth = 1.5;
+      ctx.fillRect(c2X, height * 0.45, 140, 34);
+      ctx.strokeRect(c2X, height * 0.45, 140, 34);
+      ctx.fillStyle = '#0082FC';
+      ctx.fillText("CAM A (SLIDING)", c2X + 22, height * 0.45 + 21);
+
+      // Camera 3 (Smooth slide to center)
+      if (isAnchorSnapped) camBShift += (0 - camBShift) * 0.12;
+      const c3X = anchorAxisX - 70 + camBShift;
+      ctx.fillStyle = '#13281E';
+      ctx.strokeStyle = '#00E676';
+      ctx.fillRect(c3X, height * 0.70, 140, 34);
+      ctx.strokeRect(c3X, height * 0.70, 140, 34);
+      ctx.fillStyle = '#00E676';
+      ctx.fillText("CAM B (SLIDING)", c3X + 22, height * 0.70 + 21);
+    }
+
+
+    /* --------------------------------------------------------------------
+       GLOBAL RENDER LOOP
+       -------------------------------------------------------------------- */
+    function renderLoop(now) {
+      if (!isPaused) {
+        animTime += (now - lastTime) / 1000.0;
+      }
+      lastTime = now;
+
+      // Render only the active slide's canvas for optimal 60 FPS performance
+      if (currentSlide === 0) drawDrift(animTime);
+      else if (currentSlide === 1) drawPhase(animTime);
+      else if (currentSlide === 2) drawSlice(animTime);
+      else if (currentSlide === 3) drawSound(animTime);
+      else if (currentSlide === 4) drawScope(animTime);
+      else if (currentSlide === 5) drawAnchor(animTime);
+
+      requestAnimationFrame(renderLoop);
+    }
+
+    // Launch!
+    resizeAllCanvases();
+    requestAnimationFrame(renderLoop);
+  </script>
+</body>
+</html>
