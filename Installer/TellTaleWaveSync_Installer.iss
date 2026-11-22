@@ -4,7 +4,7 @@
 ; =====================================================================
 
 #define AppName "TellTale WaveSync"
-#define AppVersion "1.4.1"
+#define AppVersion "1.4.2"
 #define AppPublisher "TellTale Audio Tools"
 #define AppURL "https://github.com"
 #define BaseDir "D:\VEGAS Extensions\VEGAS Audio Sync"
@@ -24,7 +24,7 @@ DirExistsWarning=no
 EnableDirDoesntExistWarning=no
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=commandline
-OutputBaseFilename=TellTale_WaveSync_Setup_v1.4.1
+OutputBaseFilename=TellTale_WaveSync_Setup_v1.4.2
 OutputDir={#BaseDir}\Installer\Output
 Compression=lzma2/ultra64
 SolidCompression=yes

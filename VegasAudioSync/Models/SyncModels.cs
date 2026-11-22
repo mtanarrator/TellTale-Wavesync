@@ -51,6 +51,14 @@ namespace VegasAudioSync.Models
         [DataMember(Name = "event_id")]
         public string EventId { get; set; }
 
+        /// <summary>
+        /// VEGAS' persistent EventID for this event. Used at apply time to find the
+        /// same event again, so a timeline edit during analysis cannot cause results
+        /// to be applied to a different clip that now occupies the old index.
+        /// </summary>
+        [DataMember(Name = "vegas_event_id")]
+        public long VegasEventId { get; set; }
+
         [DataMember(Name = "track_id")]
         public string TrackId { get; set; }
 
@@ -111,6 +119,10 @@ namespace VegasAudioSync.Models
     {
         [DataMember(Name = "event_id")]
         public string EventId { get; set; }
+
+        /// <summary>VEGAS' persistent EventID for this group member.</summary>
+        [DataMember(Name = "vegas_event_id")]
+        public long VegasEventId { get; set; }
 
         [DataMember(Name = "track_id")]
         public string TrackId { get; set; }

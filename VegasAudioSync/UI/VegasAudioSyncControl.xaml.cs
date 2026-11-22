@@ -465,21 +465,32 @@ namespace VegasAudioSync.UI
 
                     // Apply reconstructed positions to the VEGAS timeline
                     bool preventCrossfades = ChkPreventCrossfades.IsChecked != false;
-                    int movedCount = TimelineApplier.ApplyManifest(
+                    TimelineApplier.ApplyResult apply = TimelineApplier.ApplyManifest(
                         _vegas,
                         manifest,
-                        request.Groups,
+                        request,
                         preventCrossfades,
                         preserveOrder,
                         msg => AppendLog(msg));
-                    if (movedCount > 0)
+
+                    int unalignedCount = manifest.Events.Count - alignedCount;
+                    if (apply.Skipped > 0)
                     {
-                        TxtStatus.Text = $"Success! {movedCount} event(s) synchronized.";
-                        AppendLog($"Timeline updated. Successfully moved {movedCount} event(s).");
+                        TxtStatus.Text = $"Completed with warnings: {apply.Moved} moved, {apply.Skipped} skipped.";
+                        AppendLog($"Timeline updated with warnings: {apply.Moved} moved, {apply.Skipped} skipped. See the warnings above for the affected events.");
+                    }
+                    else if (apply.Moved > 0)
+                    {
+                        TxtStatus.Text = unalignedCount > 0
+                            ? $"Success! {apply.Moved} moved; {unalignedCount} left unaligned."
+                            : $"Success! {apply.Moved} event(s) synchronized.";
+                        AppendLog($"Timeline updated. Successfully moved {apply.Moved} event(s).");
                     }
                     else if (alignedCount > 1)
                     {
-                        TxtStatus.Text = "Events already in sync.";
+                        TxtStatus.Text = unalignedCount > 0
+                            ? $"Events already in sync; {unalignedCount} left unaligned."
+                            : "Events already in sync.";
                         AppendLog("Notice: Events were already aligned at their current timeline positions.");
                     }
                     else

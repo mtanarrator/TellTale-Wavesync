@@ -21,6 +21,27 @@ namespace VegasAudioSync.Services
         public static bool AutoMoveCompanionsInApplier = true;
 
         /// <summary>
+        /// How far an event may have moved since extraction before its result is
+        /// rejected. VEGAS timecodes are frame-based, so a few milliseconds of
+        /// conversion noise are tolerated; a real edit is far larger.
+        /// </summary>
+        private const double TimelineEditToleranceSeconds = 0.05;
+
+        /// <summary>Outcome of one apply pass.</summary>
+        public sealed class ApplyResult
+        {
+            /// <summary>Events whose position or rate was changed.</summary>
+            public int Moved;
+
+            /// <summary>
+            /// Aligned events the applier could not apply because they were removed,
+            /// moved, locked, detached, or threw during the move. These must be
+            /// surfaced to the operator instead of being reported as success.
+            /// </summary>
+            public int Skipped;
+        }
+
+        /// <summary>
         /// Applies a synchronization manifest to the timeline.
         /// </summary>
         /// <param name="preventCrossfades">
@@ -33,10 +54,10 @@ namespace VegasAudioSync.Services
         /// When true, no tracks are added and no event is reassigned to another track;
         /// overlapping results are logged as warnings instead.
         /// </param>
-        public static int ApplyManifest(
+        public static ApplyResult ApplyManifest(
             Vegas vegas,
             SyncManifest manifest,
-            IReadOnlyList<EventGroupDescriptor> groups = null,
+            SyncTaskRequest request,
             bool preventCrossfades = true,
             bool preserveTrackLayout = false,
             Action<string> logCallback = null)
@@ -44,14 +65,22 @@ namespace VegasAudioSync.Services
             if (vegas == null || vegas.Project == null)
                 throw new InvalidOperationException("No active VEGAS project loaded.");
 
+            var applyResult = new ApplyResult();
             if (manifest == null || manifest.Events == null || manifest.Events.Count == 0)
-                return 0;
+                return applyResult;
 
             var resultMap = new Dictionary<string, EventSyncResult>();
             foreach (var res in manifest.Events)
             {
                 resultMap[res.EventId] = res;
             }
+
+            var groups = request != null ? request.Groups : null;
+
+            // Map the engine's stable analysis id back to VEGAS' persistent EventID.
+            // This is what makes apply safe if the operator edits the timeline while
+            // the analysis is running.
+            var vegasIdBySyncId = BuildVegasIdMap(request);
 
             // Snapshot the tracks before we add any lanes: adding tracks mutates the
             // project collection, and all result ids are based on the original indices.
@@ -64,34 +93,54 @@ namespace VegasAudioSync.Services
                 }
             }
 
-            // Stable Event_<track>_<idx> -> live TrackEvent map for group moves.
-            var eventBySyncId = new Dictionary<string, TrackEvent>(StringComparer.Ordinal);
+            // Defensive fallback for callers that did not supply VEGAS EventIDs.
+            if (vegasIdBySyncId.Count == 0)
+            {
+                foreach (Track track in trackSnapshot)
+                {
+                    uint idx = 0;
+                    foreach (TrackEvent ev in track.Events)
+                    {
+                        vegasIdBySyncId[$"Event_{track.Index}_{idx}"] = ev.EventID;
+                        idx++;
+                    }
+                }
+
+                if (vegasIdBySyncId.Count > 0)
+                {
+                    logCallback?.Invoke(
+                        "  NOTE: analysis manifest has no VEGAS event IDs; using index mapping (edit detection limited).");
+                }
+            }
+
+            // Persistent VEGAS EventID -> live TrackEvent. Event IDs survive event
+            // reordering, unlike Event_<track>_<idx> strings.
+            var eventByVegasId = new Dictionary<long, TrackEvent>();
+            var syncIdByVegasId = new Dictionary<long, string>();
             foreach (Track track in trackSnapshot)
             {
-                uint idx = 0;
                 foreach (TrackEvent ev in track.Events)
                 {
-                    eventBySyncId[$"Event_{track.Index}_{idx}"] = ev;
-                    idx++;
+                    eventByVegasId[ev.EventID] = ev;
                 }
+            }
+            foreach (var pair in vegasIdBySyncId)
+            {
+                syncIdByVegasId[pair.Value] = pair.Key;
             }
 
             // Pre-compute which VEGAS events were aligned by the engine. This uses the
             // persistent VEGAS EventID so companion lookups never depend on object identity.
             var syncedVegasEventIds = new HashSet<long>();
-            foreach (Track track in trackSnapshot)
+            foreach (var res in manifest.Events)
             {
-                uint eventIndex = 0;
-                foreach (TrackEvent ev in track.Events)
-                {
-                    string eventId = $"Event_{track.Index}_{eventIndex}";
-                    eventIndex++;
+                if (!res.IsAligned) continue;
 
-                    EventSyncResult res;
-                    if (resultMap.TryGetValue(eventId, out res) && res.IsAligned)
-                    {
-                        syncedVegasEventIds.Add(ev.EventID);
-                    }
+                long vegasId;
+                if (vegasIdBySyncId.TryGetValue(res.EventId, out vegasId)
+                    && eventByVegasId.ContainsKey(vegasId))
+                {
+                    syncedVegasEventIds.Add(vegasId);
                 }
             }
 
@@ -114,29 +163,29 @@ namespace VegasAudioSync.Services
                             vegas,
                             group,
                             resultMap,
-                            eventBySyncId,
+                            vegasIdBySyncId,
+                            eventByVegasId,
                             changedVegasEventIds,
                             handledGroupEventIds,
                             groupMemberVegasIds,
-                            logCallback);
+                            logCallback,
+                            ref applyResult.Skipped);
                     }
                 }
 
+                var visitedSyncIds = new HashSet<string>(StringComparer.Ordinal);
                 foreach (Track track in trackSnapshot)
                 {
-                    // Snapshot events and their original Event_<track>_<idx> ids before any
-                    // Split() mutates track.Events during iteration.
+                    // Snapshot live events before any Split() mutates track.Events during iteration.
                     var queued = new List<Tuple<TrackEvent, string, EventSyncResult>>();
-                    uint eventIndex = 0;
                     foreach (TrackEvent ev in track.Events)
                     {
-                        string eventId = $"Event_{track.Index}_{eventIndex}";
-                        eventIndex++;
-
+                        string syncId;
                         EventSyncResult syncResult;
-                        if (resultMap.TryGetValue(eventId, out syncResult))
+                        if (syncIdByVegasId.TryGetValue(ev.EventID, out syncId)
+                            && resultMap.TryGetValue(syncId, out syncResult))
                         {
-                            queued.Add(Tuple.Create(ev, eventId, syncResult));
+                            queued.Add(Tuple.Create(ev, syncId, syncResult));
                         }
                     }
 
@@ -149,9 +198,26 @@ namespace VegasAudioSync.Services
                         if (handledGroupEventIds.Contains(eventId))
                             continue;
 
+                        visitedSyncIds.Add(eventId);
+
                         if (!syncResult.IsAligned)
                         {
                             logCallback?.Invoke($"  Skipping [{eventId}] (marked unaligned by engine).");
+                            continue;
+                        }
+
+                        TrackEvent resolved;
+                        string resolveReason;
+                        if (!TryResolveAnalyzedEvent(
+                                eventId,
+                                syncResult,
+                                vegasIdBySyncId,
+                                eventByVegasId,
+                                out resolved,
+                                out resolveReason))
+                        {
+                            applyResult.Skipped++;
+                            logCallback?.Invoke($"  WARNING: skipped [{eventId}]: {resolveReason}.");
                             continue;
                         }
 
@@ -160,7 +226,7 @@ namespace VegasAudioSync.Services
                             bool changed;
                             movedEventsCount += ApplyEventResult(
                                 vegas,
-                                ev,
+                                resolved,
                                 eventId,
                                 syncResult,
                                 syncedVegasEventIds,
@@ -170,14 +236,28 @@ namespace VegasAudioSync.Services
 
                             if (changed)
                             {
-                                changedVegasEventIds.Add(ev.EventID);
+                                changedVegasEventIds.Add(resolved.EventID);
                             }
                         }
                         catch (Exception ex)
                         {
+                            applyResult.Skipped++;
                             logCallback?.Invoke($"  WARNING: could not move [{eventId}]: {ex.Message}");
                         }
                     }
+                }
+
+                // Aligned results whose live event vanished entirely (deleted during
+                // analysis) are not visited above; report them as skipped as well.
+                foreach (var res in manifest.Events)
+                {
+                    if (!res.IsAligned) continue;
+                    if (handledGroupEventIds.Contains(res.EventId)) continue;
+                    if (visitedSyncIds.Contains(res.EventId)) continue;
+
+                    applyResult.Skipped++;
+                    logCallback?.Invoke(
+                        $"  WARNING: skipped [{res.EventId}]: event no longer exists on the timeline.");
                 }
 
                 if (preventCrossfades && !preserveTrackLayout && changedVegasEventIds.Count > 0)
@@ -192,7 +272,68 @@ namespace VegasAudioSync.Services
                 vegas.UpdateUI();
             }
 
-            return movedEventsCount;
+            applyResult.Moved = movedEventsCount;
+            return applyResult;
+        }
+
+        private static Dictionary<string, long> BuildVegasIdMap(SyncTaskRequest request)
+        {
+            var map = new Dictionary<string, long>(StringComparer.Ordinal);
+            if (request == null || request.Tracks == null) return map;
+
+            foreach (var track in request.Tracks)
+            {
+                if (track == null || track.Events == null) continue;
+                foreach (var ev in track.Events)
+                {
+                    if (ev == null || string.IsNullOrEmpty(ev.EventId) || ev.VegasEventId == 0) continue;
+                    map[ev.EventId] = ev.VegasEventId;
+                }
+            }
+            return map;
+        }
+
+        /// <summary>
+        /// Resolves a manifest result to the live VEGAS event with the same persistent
+        /// EventID, then verifies the event has not moved since extraction. Either
+        /// failure means applying the result would touch the wrong clip.
+        /// </summary>
+        private static bool TryResolveAnalyzedEvent(
+            string syncId,
+            EventSyncResult result,
+            Dictionary<string, long> vegasIdBySyncId,
+            Dictionary<long, TrackEvent> eventByVegasId,
+            out TrackEvent ev,
+            out string reason)
+        {
+            ev = null;
+            long vegasId;
+            if (!vegasIdBySyncId.TryGetValue(syncId, out vegasId))
+            {
+                reason = "event was not part of the analysis snapshot";
+                return false;
+            }
+
+            if (!eventByVegasId.TryGetValue(vegasId, out ev)
+                || ev == null
+                || !ev.IsValid()
+                || ev.Track == null)
+            {
+                ev = null;
+                reason = "event was removed or is no longer valid";
+                return false;
+            }
+
+            double drift = Math.Abs(Seconds(ev.Start) - result.OriginalStartSeconds);
+            if (drift > TimelineEditToleranceSeconds)
+            {
+                ev = null;
+                reason = string.Format("event moved since analysis (start differs by {0:F3}s)", drift);
+                return false;
+            }
+
+            reason = null;
+            return true;
         }
 
         /// <summary>
@@ -204,11 +345,13 @@ namespace VegasAudioSync.Services
             Vegas vegas,
             EventGroupDescriptor group,
             Dictionary<string, EventSyncResult> resultMap,
-            Dictionary<string, TrackEvent> eventBySyncId,
+            Dictionary<string, long> vegasIdBySyncId,
+            Dictionary<long, TrackEvent> eventByVegasId,
             HashSet<long> changedVegasEventIds,
             HashSet<string> handledGroupEventIds,
             HashSet<long> groupMemberVegasIds,
-            Action<string> logCallback)
+            Action<string> logCallback,
+            ref int skipped)
         {
             if (group == null || group.Members == null || group.Members.Count == 0)
                 return 0;
@@ -235,14 +378,41 @@ namespace VegasAudioSync.Services
             foreach (var member in group.Members)
             {
                 TrackEvent ev;
-                if (!eventBySyncId.TryGetValue(member.EventId, out ev)
+                long vegasId = member.VegasEventId;
+                if (vegasId == 0)
+                {
+                    // Older descriptors without a VEGAS ID: fall back to the sync-id map.
+                    vegasIdBySyncId.TryGetValue(member.EventId, out vegasId);
+                }
+
+                if (vegasId == 0
+                    || !eventByVegasId.TryGetValue(vegasId, out ev)
                     || ev == null
                     || !ev.IsValid()
                     || ev.Locked
                     || ev.Track == null)
                 {
+                    skipped += group.Members.Count;
                     logCallback?.Invoke(
                         $"  Group '{group.GroupId}': member '{member.EventId}' is missing, invalid, locked, or detached; no members moved.");
+                    return 0;
+                }
+
+                // Reject the whole group if any member moved since analysis. The
+                // group descriptor carries every member's start, including companions
+                // that were never individually analyzed.
+                double analyzedStart = member.TimelineStartSeconds;
+                EventSyncResult memberResult;
+                if (resultMap.TryGetValue(member.EventId, out memberResult))
+                {
+                    analyzedStart = memberResult.OriginalStartSeconds;
+                }
+
+                if (Math.Abs(Seconds(ev.Start) - analyzedStart) > TimelineEditToleranceSeconds)
+                {
+                    skipped += group.Members.Count;
+                    logCallback?.Invoke(
+                        $"  Group '{group.GroupId}': member '{member.EventId}' moved since analysis; no members moved.");
                     return 0;
                 }
 
@@ -262,6 +432,7 @@ namespace VegasAudioSync.Services
 
             if (primaryIndex < 0)
             {
+                skipped += group.Members.Count;
                 logCallback?.Invoke($"  Group '{group.GroupId}': primary member not found; no members moved.");
                 return 0;
             }
@@ -269,6 +440,7 @@ namespace VegasAudioSync.Services
             string reason;
             if (!GroupPlanner.ValidateMembers(states, out reason))
             {
+                skipped += group.Members.Count;
                 logCallback?.Invoke($"  Group '{group.GroupId}': {reason}; no members moved.");
                 return 0;
             }
@@ -278,6 +450,7 @@ namespace VegasAudioSync.Services
             if (!GroupPlanner.TryPlan(starts[primaryIndex], primaryResult.ResolvedStartSeconds, starts, out delta, out targets)
                 || !GroupPlanner.PreservesInternalOffsets(starts, targets))
             {
+                skipped += group.Members.Count;
                 logCallback?.Invoke($"  Group '{group.GroupId}': could not compute a safe rigid move; no members moved.");
                 return 0;
             }

@@ -267,6 +267,7 @@ namespace VegasAudioSync.Services
                     var eventDesc = new EventDescriptor
                     {
                         EventId = syncId,
+                        VegasEventId = ev.EventID,
                         TrackId = trackDesc.TrackId,
                         FilePath = resolvedPath,
                         StreamIndex = (uint)Math.Max(0, activeTake.StreamIndex),
@@ -483,6 +484,7 @@ namespace VegasAudioSync.Services
                 descriptor.Members.Add(new EventGroupMember
                 {
                     EventId = member.SyncId,
+                    VegasEventId = member.VegasEventId,
                     TrackId = $"Track_{member.Track.Index}",
                     TimelineStartSeconds = member.TimelineStartSeconds,
                     TimelineLengthSeconds = member.TimelineLengthSeconds,

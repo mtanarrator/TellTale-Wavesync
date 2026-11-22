@@ -1,5 +1,13 @@
 # TellTale WaveSync — Change Summary
 
+## v1.4.2 — Audit fixes: honest results, edit-safe apply, DST detection
+
+- **Edit-safe apply:** the request now carries each clip's persistent VEGAS `EventID`; the applier re-matches by that ID and rejects any result whose clip moved since analysis. A timeline edit during a long analysis can no longer apply a result to a different clip.
+- **Honest completion status:** `ApplyManifest` returns moved and skipped counts. Partial applies show `Completed with warnings: N moved, M skipped`; clean applies report unaligned clips instead of silently calling them success.
+- **DST clock-jump detection:** when two anchor clusters imply clocks about one hour apart (3300–3900 s), the run log warns that the source may have crossed a daylight-saving boundary and suggests the DST mode.
+- **Tests:** 39/39 Rust tests pass, including three new clock-jump tests.
+- **Installers:** `TellTale_WaveSync_Setup_v1.4.2.exe` / `.msi`.
+
 ## v1.4.1 — DST clarity + toggle interlocks
 
 - **Renamed the mode** from "Sync in Place (Lock Order)" to **"Ignore Camera Clock Jumps (DST)"**. The old label described the mechanism; the new one names the problem. `preserve_timeline_order` is unchanged and still defaults **OFF**.

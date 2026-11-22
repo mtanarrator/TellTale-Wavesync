@@ -4,8 +4,8 @@
 **TellTale WaveSync** is a 100% free, native audio & multi-camera synchronization extension for **VEGAS Pro** (a PluralEyes alternative).
 - **Architecture:**
   - **Rust Native Engine:** `D:\VEGAS Extensions\VEGAS Audio Sync\vegas_sync_core` → compiles to `telltale_sync_core.dll` (30 tests passing, including long-take, source-clock, master-anchor and crossfade-lane suites).
-  - **C# .NET 4.8 Extension & WPF UI:** `D:\VEGAS Extensions\VEGAS Audio Sync\VegasAudioSync` → compiles to `TellTale_Audiosync.dll` (v1.4.1).
-  - **Installer:** `D:\VEGAS Extensions\VEGAS Audio Sync\Installer\TellTaleWaveSync_Installer.iss` → compiles via Inno Setup 6 (`ISCC.exe`) to `TellTale_WaveSync_Setup_v1.4.1.exe`.
+  - **C# .NET 4.8 Extension & WPF UI:** `D:\VEGAS Extensions\VEGAS Audio Sync\VegasAudioSync` → compiles to `TellTale_Audiosync.dll` (v1.4.2).
+  - **Installer:** `D:\VEGAS Extensions\VEGAS Audio Sync\Installer\TellTaleWaveSync_Installer.iss` → compiles via Inno Setup 6 (`ISCC.exe`) to `TellTale_WaveSync_Setup_v1.4.2.exe`.
 
 ---
 
@@ -53,6 +53,13 @@ The v1.2 behavior still failed on the real "Sync Wedding" project: 2–4 s camer
 - `TimelineApplier` verifies each lane move (`ev.Track.Index`), reuses existing "Sync Lane N" tracks on re-runs, and caps lanes per track.
 
 **Validation on the real files:** all 167 FX3 clips align against the 9 h master in ~30 s; 166/167 transitions match the recorded timeline exactly (the single 30.5 s step is the boundary between the two camera clock bodies). The AX100 group (7 clips) also aligns consistently. `TestHarness --realtest <master> <off> <len> <clip:|...>` reproduces this.
+
+### v1.4.2 - audit fixes
+- `ApplyManifest` now takes the `SyncTaskRequest`, maps results by `EventDescriptor.VegasEventId`, validates `OriginalStartSeconds` (50 ms tolerance), and returns `ApplyResult { Moved, Skipped }`.
+- Groups reject the whole group if any member moved since analysis; skipped members are counted.
+- UI status distinguishes **Completed with warnings** from success and reports unaligned counts.
+- Engine warns when implied source clocks differ by 3300-3900 s (possible DST jump); three new unit tests bring Rust to 39.
+- Version `1.4.2`; installers `TellTale_WaveSync_Setup_v1.4.2.exe` / `.msi`.
 
 ### v1.4.1 - DST clarity + toggle interlocks
 - UI label renamed to **Ignore Camera Clock Jumps (DST)** (was "Sync in Place (Lock Order)"). `preserve_timeline_order` still defaults `false`.
