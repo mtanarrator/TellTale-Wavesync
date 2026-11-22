@@ -58,6 +58,18 @@ namespace VegasAudioSync.Interop
             }
         }
 
+        /// <summary>
+        /// Native ABI family this extension was built and tested against. A DLL from
+        /// a different family may still load but can be missing symbols or behavior.
+        /// </summary>
+        public const string ExpectedVersionPrefix = "telltale_sync_core v0.2.";
+
+        public static bool IsCompatibleVersion(string version)
+        {
+            return !string.IsNullOrEmpty(version)
+                && version.StartsWith(ExpectedVersionPrefix, StringComparison.OrdinalIgnoreCase);
+        }
+
         public string GetEngineVersion()
         {
             EnsureLibraryLoaded();

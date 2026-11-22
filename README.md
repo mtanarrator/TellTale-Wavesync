@@ -15,6 +15,8 @@ TellTale WaveSync is a native VEGAS Pro extension powered by a SIMD-accelerated 
 - **Edit-Safe Apply (v1.4.2):** Results are matched back to clips by VEGAS' persistent `EventID` and checked against the position captured at analysis. If you move, trim, split, or delete a clip while a long sync is running, that result is skipped - it is never applied to a different clip that drifted into the old index.
 - **Honest Completion Status (v1.4.2):** The status line reports moved, skipped, and unaligned counts. Partial results say **Completed with warnings** instead of **Success**.
 - **DST Clock-Jump Detection (v1.4.2):** If a source's implied camera clocks differ by about one hour, the run log flags a possible daylight-saving change and points you to **Ignore Camera Clock Jumps (DST)**.
+- **Persistent Settings (v1.4.3):** Your processing toggles and master anchor are restored on the next VEGAS session (stored under `%LOCALAPPDATA%\TellTale\WaveSync\settings.json`).
+- **Engine Health Check (v1.4.3):** The status line shows the extension and native-engine versions. A missing native engine disables **Sync** with a clear reinstall message; a version mismatch is flagged instead of silently reporting **Ready**.
 - **Long-Take / Wedding Support:** Handles recorder takes that are hours long and longer than the footage. Long media is streamed into a compact energy envelope and only small windows are ever loaded into RAM — so a 2-hour ceremony take no longer stalls or exhausts memory.
 - **Match Validation (NCC):** Envelope correlation scores gate every alignment. Weak or ambiguous matches are left untouched instead of being moved to a wrong position.
 - **Multicam Video Clip Audio:** Camera clips on video tracks are analyzed through their embedded scratch audio, so footage can be aligned directly (toggleable).
@@ -31,7 +33,7 @@ TellTale WaveSync is a native VEGAS Pro extension powered by a SIMD-accelerated 
 ## Installation
 
 ### Option 1: Windows MSI Installer (Recommended)
-Run **`TellTale_WaveSync_Setup_v1.4.2.msi`**. The installer places all required binaries into `%ProgramData%\Vegas Pro\2027.0\Application Extensions` and automatically removes any prior Inno Setup WaveSync installation and registry entries.
+Run **`TellTale_WaveSync_Setup_v1.4.3.msi`**. The installer places all required binaries into `%ProgramData%\Vegas Pro\2027.0\Application Extensions` and automatically removes any prior Inno Setup WaveSync installation and registry entries.
 
 ### Option 2: Manual Installation
 Copy the compiled extension DLLs (`TellTale_Audiosync.dll`, `telltale_sync_core.dll`, and dependencies) into:
@@ -67,7 +69,7 @@ Wedding/event projects typically contain one long continuous recorder take (ofte
 - Clips without timestamps fall back to a single rigid group shift derived from the reliable clips, which preserves the editor's relative arrangement.
 - Timestamps come from VEGAS' own `Media.RecordedDateTime` (the camera's creation time). If a file has no timestamp, audio matching is used instead.
 
-**Note:** recorded-time positioning places clips at their true chronological position. If you intentionally reordered clips for storytelling, expect the sync to restore the recorded order; always review before saving (one Ctrl+Z reverts the whole pass).
+**Note:** recorded-time positioning places clips at their true chronological position. If you intentionally reordered clips for storytelling, expect the sync to restore the recorded order; always review before saving (one Ctrl+Z reverts the whole pass). If the camera crossed a daylight-saving boundary — or its clock otherwise jumped by an hour — enable **Ignore Camera Clock Jumps (DST)**: recorded timestamps are then ignored for placement and each source is shifted rigidly from audio.
 
 ---
 
@@ -79,7 +81,7 @@ Wedding/event projects typically contain one long continuous recorder take (ofte
 | `TellTale_Audiosync.dll` / `VegasAudioSync/` | C# (.NET 4.8) VEGAS Pro extension & WPF UI (`TellTale_Audiosync.dll`) |
 | `Installer/` | WiX v4 MSI source (`TellTaleWaveSync.wxs`, `License.rtf`) & legacy Inno script |
 | `TestHarness/` | Standalone verifier — run with `--longtest` for the long-take wedding scenario |
-| `TellTale_WaveSync_Setup_v1.4.2.msi` | Compiled Windows MSI installer |
+| `TellTale_WaveSync_Setup_v1.4.3.msi` | Compiled Windows MSI installer |
 | `TellTale_WaveSync_Presentation.html` | Edge-compatible offline fullscreen presentation deck |
 | `telltale_wavesync_screenshot.png` | Clean offscreen-rendered UI screenshot |
 | `TellTale_WaveSync_YouTube_Thumbnail.png` | 1280×720 YouTube showcase thumbnail |

@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using ScriptPortal.Vegas;
 using VegasAudioSync.Interop;
 using VegasAudioSync.Models;
@@ -22,8 +24,15 @@ namespace VegasAudioSync.UI
         private readonly Queue<string> _logLines = new Queue<string>();
         private readonly HashSet<CheckBox> _lockedToggles = new HashSet<CheckBox>();
         private readonly Dictionary<CheckBox, object> _unlockedToolTips = new Dictionary<CheckBox, object>();
+        private static readonly Color StatusReadyColor = Color.FromRgb(0x9B, 0xA3, 0xB8);
+        private static readonly Color StatusWarningColor = Color.FromRgb(0xE0, 0xA3, 0x4A);
+        private static readonly Color StatusErrorColor = Color.FromRgb(0xE0, 0x6C, 0x6C);
         private volatile bool _cancelRequested;
         private bool _suppressInterlock;
+        private bool _suppressSettingsSave;
+        private bool _engineAvailable = true;
+        private bool _initialTrackRefresh = true;
+        private UserSettings _settings;
         private string _cachedFfmpegPath;
 
         public VegasAudioSyncControl() : this(null) { }
@@ -33,13 +42,18 @@ namespace VegasAudioSync.UI
             InitializeComponent();
             _vegas = vegas;
             _engine = new NativeSyncEngine();
+            _settings = UserSettingsStore.Load();
 
             SetupToggleInterlocks();
+            ApplySettingsToUi();
+            WireSettingsPersistence();
+
             Loaded += OnControlLoaded;
+            Unloaded += OnControlUnloaded;
         }
 
         /// <summary>
-        /// Sync in Place is a rigid audio-based mode: camera timestamps are ignored,
+        /// Ignore Camera Clock Jumps (DST) is a rigid audio-based mode: camera timestamps are ignored,
         /// playback rate is never changed, and no tracks or split points are produced.
         /// The precision toggles below would therefore silently do nothing, so they
         /// are locked while the mode is active. Clicking a locked toggle explains the
@@ -81,6 +95,17 @@ namespace VegasAudioSync.UI
         {
             if (_suppressInterlock) return;
 
+            EnforcePreserveInterlocks(true);
+            AppendLog("Ignore Camera Clock Jumps (DST) ON: a camera clock jump (including a daylight-saving change) cannot move or reorder clips.");
+        }
+
+        /// <summary>
+        /// Turns off and locks the options that cannot take effect in rigid-shift
+        /// mode. Called when the operator enables the mode and when saved settings
+        /// are restored.
+        /// </summary>
+        private void EnforcePreserveInterlocks(bool log)
+        {
             _suppressInterlock = true;
             try
             {
@@ -89,8 +114,11 @@ namespace VegasAudioSync.UI
                     if (toggle.IsChecked == true)
                     {
                         toggle.IsChecked = false;
-                        AppendLog("Sync in Place is ON, so '" + ToggleTitle(toggle) +
-                                  "' was switched off (the two modes cannot run together).");
+                        if (log)
+                        {
+                            AppendLog("Ignore Camera Clock Jumps (DST) is ON, so '" + ToggleTitle(toggle) +
+                                      "' was switched off (the two modes cannot run together).");
+                        }
                     }
                     LockToggle(toggle);
                 }
@@ -101,7 +129,6 @@ namespace VegasAudioSync.UI
             }
 
             if (TxtPreserveHint != null) TxtPreserveHint.Visibility = Visibility.Visible;
-            AppendLog("DST mode ON: a camera clock jump (including a daylight-saving change) cannot move or reorder clips.");
         }
 
         private void PreserveOrder_Unchecked(object sender, RoutedEventArgs e)
@@ -123,7 +150,7 @@ namespace VegasAudioSync.UI
             }
 
             toggle.Opacity = 0.45;
-            toggle.ToolTip = "Locked while Sync in Place (DST mode) is ON. Click to review and override.";
+            toggle.ToolTip = "Locked while Ignore Camera Clock Jumps (DST) is ON. Click to review and override.";
         }
 
         private void UnlockToggle(CheckBox toggle)
@@ -176,13 +203,13 @@ namespace VegasAudioSync.UI
         {
             string name = ToggleTitle(toggle);
             string message =
-                "Sync in Place (DST mode) is ON.\n\n" +
+                "Ignore Camera Clock Jumps (DST) is ON.\n\n" +
                 "In this mode every clip in a source is moved by one rigid, audio-derived offset. " +
                 "The camera clock is ignored, playback rate is never changed, overlapping clips are " +
                 "reported instead of being spread onto new tracks, and dropped-frame split points are " +
                 "not applied.\n\n" +
-                "\"" + name + "\" cannot take effect while Sync in Place is ON.\n\n" +
-                "Turn OFF Sync in Place and enable \"" + name + "\" anyway?";
+                "\"" + name + "\" cannot take effect while Ignore Camera Clock Jumps (DST) is ON.\n\n" +
+                "Turn OFF Ignore Camera Clock Jumps (DST) and enable \"" + name + "\" anyway?";
 
             MessageBoxResult answer = MessageBox.Show(
                 message,
@@ -196,7 +223,122 @@ namespace VegasAudioSync.UI
             // Unchecking the mode unlocks all dependent toggles; then honor the override.
             ChkPreserveOrder.IsChecked = false;
             toggle.IsChecked = true;
-            AppendLog("Override: Sync in Place was turned off so '" + name + "' could be enabled.");
+            AppendLog("Override: Ignore Camera Clock Jumps (DST) was turned off so '" + name + "' could be enabled.");
+        }
+
+        private void ApplySettingsToUi()
+        {
+            if (_settings == null) _settings = new UserSettings();
+
+            _suppressSettingsSave = true;
+            _suppressInterlock = true;
+            try
+            {
+                ChkDetectDrift.IsChecked = _settings.DetectDrift;
+                ChkSubSample.IsChecked = _settings.SubSampleAccuracy;
+                ChkDiscontinuity.IsChecked = _settings.DetectDiscontinuities;
+                ChkVoiceActivity.IsChecked = _settings.VoiceActivityFilter;
+                ChkSelectedOnly.IsChecked = _settings.SelectedOnly;
+                ChkIncludeVideo.IsChecked = _settings.IncludeVideo;
+                ChkPreventCrossfades.IsChecked = _settings.PreventCrossfades;
+                ChkPreserveOrder.IsChecked = _settings.PreserveTimelineOrder;
+            }
+            finally
+            {
+                _suppressInterlock = false;
+                _suppressSettingsSave = false;
+            }
+
+            // A saved DST state may predate the interlock, or the operator may have
+            // edited the JSON by hand. Re-apply the rule without logging a mode change.
+            if (ChkPreserveOrder.IsChecked == true)
+            {
+                EnforcePreserveInterlocks(false);
+            }
+        }
+
+        private void WireSettingsPersistence()
+        {
+            CheckBox[] toggles =
+            {
+                ChkDetectDrift,
+                ChkSubSample,
+                ChkDiscontinuity,
+                ChkVoiceActivity,
+                ChkSelectedOnly,
+                ChkIncludeVideo,
+                ChkPreventCrossfades,
+                ChkPreserveOrder
+            };
+
+            foreach (CheckBox toggle in toggles)
+            {
+                toggle.Checked += SettingToggle_Changed;
+                toggle.Unchecked += SettingToggle_Changed;
+            }
+
+            CmbMasterTrack.SelectionChanged += MasterTrack_SelectionChanged;
+        }
+
+        private void SettingToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_suppressSettingsSave || _suppressInterlock) return;
+            SaveSettings();
+        }
+
+        private void MasterTrack_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressSettingsSave) return;
+            SaveSettings();
+        }
+
+        private void SaveSettings()
+        {
+            if (_settings == null) _settings = new UserSettings();
+
+            _settings.PreserveTimelineOrder = ChkPreserveOrder.IsChecked == true;
+            _settings.DetectDrift = ChkDetectDrift.IsChecked == true;
+            _settings.SubSampleAccuracy = ChkSubSample.IsChecked == true;
+            _settings.DetectDiscontinuities = ChkDiscontinuity.IsChecked == true;
+            _settings.VoiceActivityFilter = ChkVoiceActivity.IsChecked == true;
+            _settings.SelectedOnly = ChkSelectedOnly.IsChecked == true;
+            _settings.IncludeVideo = ChkIncludeVideo.IsChecked == true;
+            _settings.PreventCrossfades = ChkPreventCrossfades.IsChecked == true;
+
+            var choice = (CmbMasterTrack.SelectedItem as ComboBoxItem)?.Tag as MasterChoice;
+            _settings.MasterTrackId = choice != null ? choice.TrackId : null;
+            _settings.MasterTrackName = choice != null ? choice.Name : null;
+            _settings.MasterTrackIsVideo = choice != null && choice.IsVideo;
+
+            UserSettingsStore.Save(_settings);
+        }
+
+        private void OnControlUnloaded(object sender, RoutedEventArgs e)
+        {
+            // Closing the dock during a long analysis should stop the work.
+            _cancelRequested = true;
+            SaveSettings();
+        }
+
+        private void SetStatus(string text, Color color)
+        {
+            TxtStatus.Text = text;
+            TxtStatus.Foreground = new SolidColorBrush(color);
+        }
+
+        /// <summary>
+        /// "telltale_sync_core v0.2.0 (SIMD-enabled Rust Native Engine)" -> "v0.2.0"
+        /// </summary>
+        private static string ShortEngineVersion(string version)
+        {
+            if (string.IsNullOrEmpty(version)) return "unknown";
+
+            int marker = version.IndexOf(" v", StringComparison.OrdinalIgnoreCase);
+            if (marker < 0) return version;
+
+            int start = marker + 1;
+            int end = version.IndexOf(' ', start);
+            return end > start ? version.Substring(start, end - start) : version.Substring(start);
         }
 
         private async void OnControlLoaded(object sender, RoutedEventArgs e)
@@ -204,14 +346,35 @@ namespace VegasAudioSync.UI
             try
             {
                 string ver = _engine.GetEngineVersion();
-                if (!string.IsNullOrEmpty(ver))
+                string extensionVersion = Assembly.GetExecutingAssembly().GetName().Version.ToString();
+
+                if (string.IsNullOrEmpty(ver)
+                    || ver.IndexOf("Unknown", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
-                    TxtStatus.Text = "Ready · " + ver;
+                    _engineAvailable = false;
+                    SetStatus("Native engine unavailable — reinstall TellTale WaveSync", StatusErrorColor);
+                    AppendLog("Failed to load native engine: the version query returned '" + (ver ?? "null") + "'.");
+                    BtnSync.IsEnabled = false;
+                }
+                else if (!NativeSyncEngine.IsCompatibleVersion(ver))
+                {
+                    SetStatus("Engine " + ShortEngineVersion(ver) + " mismatch — expected v0.2.x", StatusWarningColor);
+                    AppendLog(
+                        "WARNING: native engine reports '" + ver + "'; this extension expects " +
+                        NativeSyncEngine.ExpectedVersionPrefix + "x. Reinstall the matching TellTale WaveSync package.");
+                }
+                else
+                {
+                    SetStatus("Ready — ext " + extensionVersion + " / engine " + ShortEngineVersion(ver), StatusReadyColor);
+                    AppendLog("Native engine: " + ver + " (extension " + extensionVersion + ").");
                 }
             }
             catch (Exception ex)
             {
+                _engineAvailable = false;
+                SetStatus("Native engine failed to load — reinstall TellTale WaveSync", StatusErrorColor);
                 AppendLog("Failed to load native engine: " + ex.Message);
+                BtnSync.IsEnabled = false;
             }
 
             RefreshTimelineTracks();
@@ -226,12 +389,24 @@ namespace VegasAudioSync.UI
         private sealed class MasterChoice
         {
             public string TrackId;
+            public string Name;
             public bool IsVideo;
+        }
+
+        private bool MatchesSavedMaster(MasterChoice choice)
+        {
+            if (_settings == null || choice == null) return false;
+            if (!string.Equals(choice.TrackId, _settings.MasterTrackId, StringComparison.Ordinal)) return false;
+            if (!string.Equals(choice.Name ?? string.Empty, _settings.MasterTrackName ?? string.Empty, StringComparison.Ordinal)) return false;
+            return choice.IsVideo == _settings.MasterTrackIsVideo;
         }
 
         private void RefreshTimelineTracks()
         {
             if (_vegas == null || _vegas.Project == null) return;
+
+            bool restoreSavedMaster = _initialTrackRefresh;
+            _initialTrackRefresh = false;
 
             // Preserve the operator's choice across refreshes.
             string previousTrackId = null;
@@ -239,6 +414,11 @@ namespace VegasAudioSync.UI
             if (previousChoice != null)
             {
                 previousTrackId = previousChoice.TrackId;
+            }
+            else if (restoreSavedMaster && _settings != null)
+            {
+                // First population of this session: restore the saved master anchor.
+                previousTrackId = _settings.MasterTrackId;
             }
 
             CmbMasterTrack.Items.Clear();
@@ -284,6 +464,7 @@ namespace VegasAudioSync.UI
                 var choice = new MasterChoice
                 {
                     TrackId = $"Track_{track.Index}",
+                    Name = name,
                     IsVideo = track.IsVideo()
                 };
 
@@ -302,7 +483,9 @@ namespace VegasAudioSync.UI
 
                 CmbMasterTrack.Items.Add(item);
 
-                if (previousTrackId != null && previousTrackId == choice.TrackId)
+                if (previousTrackId != null
+                    && previousTrackId == choice.TrackId
+                    && (!restoreSavedMaster || MatchesSavedMaster(choice)))
                 {
                     CmbMasterTrack.SelectedItem = item;
                 }
@@ -347,12 +530,22 @@ namespace VegasAudioSync.UI
                 return;
             }
 
+            if (!_engineAvailable)
+            {
+                MessageBox.Show(
+                    "The native sync engine is not available. Reinstall TellTale WaveSync, then restart VEGAS Pro.",
+                    "TellTale WaveSync",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+
             _cancelRequested = false;
             BtnSync.IsEnabled = false;
             BtnRefresh.IsEnabled = false;
             BtnCancel.IsEnabled = true;
             PrgSync.Value = 0;
-            TxtStatus.Text = "Analyzing timeline...";
+            SetStatus("Analyzing timeline...", StatusReadyColor);
             ClearLog();
 
             try
@@ -382,7 +575,7 @@ namespace VegasAudioSync.UI
                 if (request.Tracks.Count == 0)
                 {
                     AppendLog("No valid audio events found on the timeline to synchronize.");
-                    TxtStatus.Text = "No events found.";
+                    SetStatus("No events found.", StatusWarningColor);
                     return;
                 }
 
@@ -401,7 +594,7 @@ namespace VegasAudioSync.UI
 
                 if (preserveOrder)
                 {
-                    AppendLog("DST mode (Sync in Place) enabled: recorded timestamps are ignored for placement, so camera clock jumps cannot move or reorder clips; no tracks will be added.");
+                    AppendLog("Ignore Camera Clock Jumps (DST) enabled: recorded timestamps are ignored for placement, so camera clock jumps cannot move or reorder clips; no tracks will be added.");
                 }
 
                 if (masterChoice != null && !string.IsNullOrEmpty(masterChoice.TrackId))
@@ -459,9 +652,20 @@ namespace VegasAudioSync.UI
 
                     if (alignedCount <= 1 && manifest.Events.Count > 1)
                     {
-                        TxtStatus.Text = "No secondary events aligned.";
+                        SetStatus("No secondary events aligned.", StatusWarningColor);
                         AppendLog("Notice: No audio matches were found with sufficient confidence. Verify that the tracks share common audible audio (voices, music, room sound).");
                     }
+
+                    // Cancellation is honored until the moment of apply. Once the
+                    // UndoBlock starts, the pass is committed as a unit; disable the
+                    // Stop button rather than pretending it can interrupt the move.
+                    if (_cancelRequested)
+                    {
+                        throw new OperationCanceledException();
+                    }
+
+                    SetStatus("Applying changes...", StatusReadyColor);
+                    BtnCancel.IsEnabled = false;
 
                     // Apply reconstructed positions to the VEGAS timeline
                     bool preventCrossfades = ChkPreventCrossfades.IsChecked != false;
@@ -476,47 +680,51 @@ namespace VegasAudioSync.UI
                     int unalignedCount = manifest.Events.Count - alignedCount;
                     if (apply.Skipped > 0)
                     {
-                        TxtStatus.Text = $"Completed with warnings: {apply.Moved} moved, {apply.Skipped} skipped.";
+                        SetStatus($"Completed with warnings: {apply.Moved} moved, {apply.Skipped} skipped.", StatusWarningColor);
                         AppendLog($"Timeline updated with warnings: {apply.Moved} moved, {apply.Skipped} skipped. See the warnings above for the affected events.");
                     }
                     else if (apply.Moved > 0)
                     {
-                        TxtStatus.Text = unalignedCount > 0
-                            ? $"Success! {apply.Moved} moved; {unalignedCount} left unaligned."
-                            : $"Success! {apply.Moved} event(s) synchronized.";
+                        SetStatus(
+                            unalignedCount > 0
+                                ? $"Success! {apply.Moved} moved; {unalignedCount} left unaligned."
+                                : $"Success! {apply.Moved} event(s) synchronized.",
+                            unalignedCount > 0 ? StatusWarningColor : StatusReadyColor);
                         AppendLog($"Timeline updated. Successfully moved {apply.Moved} event(s).");
                     }
                     else if (alignedCount > 1)
                     {
-                        TxtStatus.Text = unalignedCount > 0
-                            ? $"Events already in sync; {unalignedCount} left unaligned."
-                            : "Events already in sync.";
+                        SetStatus(
+                            unalignedCount > 0
+                                ? $"Events already in sync; {unalignedCount} left unaligned."
+                                : "Events already in sync.",
+                            unalignedCount > 0 ? StatusWarningColor : StatusReadyColor);
                         AppendLog("Notice: Events were already aligned at their current timeline positions.");
                     }
                     else
                     {
-                        TxtStatus.Text = "Finished: 0 events moved.";
+                        SetStatus("Finished: 0 events moved.", StatusReadyColor);
                     }
                 }
                 else
                 {
-                    TxtStatus.Text = "Synchronization failed.";
+                    SetStatus("Synchronization failed.", StatusErrorColor);
                     AppendLog("Sync process did not return a successful manifest.");
                 }
             }
             catch (OperationCanceledException)
             {
-                TxtStatus.Text = "Synchronization cancelled.";
+                SetStatus("Synchronization cancelled.", StatusReadyColor);
                 AppendLog("Cancelled by user. No timeline changes were applied.");
             }
             catch (Exception ex)
             {
-                TxtStatus.Text = "Error during synchronization";
+                SetStatus("Error during synchronization", StatusErrorColor);
                 AppendLog("ERROR: " + ex);
             }
             finally
             {
-                BtnSync.IsEnabled = true;
+                BtnSync.IsEnabled = _engineAvailable;
                 BtnRefresh.IsEnabled = true;
                 BtnCancel.IsEnabled = false;
                 _cancelRequested = false;

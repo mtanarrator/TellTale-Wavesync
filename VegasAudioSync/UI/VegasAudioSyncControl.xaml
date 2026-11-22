@@ -301,7 +301,7 @@
                 </CheckBox>
 
                 <TextBlock x:Name="TxtPreserveHint"
-                           Text="Sync in Place is ON. Clock Drift Correction, Dropped-Frame Auto-Slicing, and Prevent Crossfades are locked because they cannot take effect in this mode. Click a locked option to override."
+                           Text="Ignore Camera Clock Jumps (DST) is ON. Clock Drift Correction, Dropped-Frame Auto-Slicing, and Prevent Crossfades are locked because they cannot take effect in this mode. Click a locked option to override."
                            FontSize="9.5" Foreground="#E0A34A" TextWrapping="Wrap" Margin="0,5,0,0" Visibility="Collapsed"/>
             </StackPanel>
         </Border>

@@ -159,17 +159,30 @@ namespace VegasAudioSync.Services
                 {
                     foreach (var group in groups)
                     {
-                        movedEventsCount += TryApplyGroup(
-                            vegas,
-                            group,
-                            resultMap,
-                            vegasIdBySyncId,
-                            eventByVegasId,
-                            changedVegasEventIds,
-                            handledGroupEventIds,
-                            groupMemberVegasIds,
-                            logCallback,
-                            ref applyResult.Skipped);
+                        try
+                        {
+                            movedEventsCount += TryApplyGroup(
+                                vegas,
+                                group,
+                                resultMap,
+                                vegasIdBySyncId,
+                                eventByVegasId,
+                                changedVegasEventIds,
+                                handledGroupEventIds,
+                                groupMemberVegasIds,
+                                logCallback,
+                                ref applyResult.Skipped);
+                        }
+                        catch (Exception ex)
+                        {
+                            // A failure after the move (for example a split) must not
+                            // abort the remaining groups or the per-event pass.
+                            applyResult.Skipped += group != null && group.Members != null
+                                ? group.Members.Count
+                                : 1;
+                            logCallback?.Invoke(
+                                $"  Group '{group.GroupId}': {ex.Message}; remaining members treated as skipped.");
+                        }
                     }
                 }
 
@@ -458,29 +471,73 @@ namespace VegasAudioSync.Services
             double safeRate = Math.Max(0.90, Math.Min(1.10, primaryResult.PlaybackRate));
             bool rateChanged = Math.Abs(safeRate - 1.0) > 1e-6;
 
+            var originalRates = new List<double>();
+            foreach (var ev in memberEvents)
+            {
+                originalRates.Add(ev.PlaybackRate);
+            }
+
             int moved;
             if (AutoMoveCompanionsInApplier)
             {
-                for (int i = 0; i < memberEvents.Count; i++)
+                var movedIndexes = new List<int>();
+                try
                 {
-                    TrackEvent ev = memberEvents[i];
-                    ev.AdjustStartLength(Timecode.FromMilliseconds(targets[i] * 1000.0), ev.Length, false);
-                    if (rateChanged) ev.PlaybackRate = safeRate;
-                    changedVegasEventIds.Add(ev.EventID);
-                    groupMemberVegasIds.Add(ev.EventID);
+                    for (int i = 0; i < memberEvents.Count; i++)
+                    {
+                        TrackEvent ev = memberEvents[i];
+                        ev.AdjustStartLength(Timecode.FromMilliseconds(targets[i] * 1000.0), ev.Length, false);
+                        if (rateChanged) ev.PlaybackRate = safeRate;
+                        movedIndexes.Add(i);
+                        changedVegasEventIds.Add(ev.EventID);
+                        groupMemberVegasIds.Add(ev.EventID);
+                    }
+                    moved = memberEvents.Count;
                 }
-                moved = memberEvents.Count;
+                catch (Exception ex)
+                {
+                    RollBackGroupMembers(
+                        memberEvents,
+                        movedIndexes,
+                        starts,
+                        originalRates,
+                        rateChanged,
+                        changedVegasEventIds,
+                        groupMemberVegasIds);
+                    skipped += memberEvents.Count;
+                    logCallback?.Invoke(
+                        $"  Group '{group.GroupId}': move failed ({ex.Message}); all members were rolled back.");
+                    return 0;
+                }
             }
             else
             {
                 TrackEvent primary = memberEvents[primaryIndex];
-                primary.AdjustStartLength(
-                    Timecode.FromMilliseconds(targets[primaryIndex] * 1000.0),
-                    primary.Length,
-                    false);
-                if (rateChanged) primary.PlaybackRate = safeRate;
-                changedVegasEventIds.Add(primary.EventID);
-                moved = 1;
+                try
+                {
+                    primary.AdjustStartLength(
+                        Timecode.FromMilliseconds(targets[primaryIndex] * 1000.0),
+                        primary.Length,
+                        false);
+                    if (rateChanged) primary.PlaybackRate = safeRate;
+                    changedVegasEventIds.Add(primary.EventID);
+                    moved = 1;
+                }
+                catch (Exception ex)
+                {
+                    RollBackGroupMembers(
+                        memberEvents,
+                        new List<int> { primaryIndex },
+                        starts,
+                        originalRates,
+                        rateChanged,
+                        changedVegasEventIds,
+                        groupMemberVegasIds);
+                    skipped += memberEvents.Count;
+                    logCallback?.Invoke(
+                        $"  Group '{group.GroupId}': primary move failed ({ex.Message}); rolled back. No companions were moved.");
+                    return 0;
+                }
 
                 // The host moves companions; pin them so the lane pass cannot split the group.
                 foreach (var ev in memberEvents)
@@ -534,7 +591,7 @@ namespace VegasAudioSync.Services
         }
 
         /// <summary>
-        /// Sync in Place: report overlapping results that were left alone because
+        /// Ignore Camera Clock Jumps (DST): report overlapping results that were left alone because
         /// track layout must not change.
         /// </summary>
         private static void LogOverlappingEvents(List<Track> trackSnapshot, Action<string> logCallback)
@@ -568,7 +625,43 @@ namespace VegasAudioSync.Services
             if (overlaps > 0)
             {
                 logCallback?.Invoke(
-                    $"Sync in Place: {overlaps} overlapping pair(s) left on their tracks (no lanes created). Review these manually.");
+                    $"Ignore Camera Clock Jumps (DST): {overlaps} overlapping pair(s) left on their tracks (no lanes created). Review these manually.");
+            }
+        }
+
+        /// <summary>
+        /// Best-effort rollback for a group whose move failed partway through.
+        /// Restores start and playback rate in reverse order and removes the members
+        /// from the changed/pinned sets so the lane pass does not react to them.
+        /// The surrounding UndoBlock remains the final safety net.
+        /// </summary>
+        private static void RollBackGroupMembers(
+            List<TrackEvent> memberEvents,
+            List<int> movedIndexes,
+            List<double> originalStarts,
+            List<double> originalRates,
+            bool rateChanged,
+            HashSet<long> changedVegasEventIds,
+            HashSet<long> groupMemberVegasIds)
+        {
+            for (int k = movedIndexes.Count - 1; k >= 0; k--)
+            {
+                int i = movedIndexes[k];
+                TrackEvent ev = memberEvents[i];
+                try
+                {
+                    ev.AdjustStartLength(
+                        Timecode.FromMilliseconds(originalStarts[i] * 1000.0),
+                        ev.Length,
+                        false);
+                    if (rateChanged) ev.PlaybackRate = originalRates[i];
+                    changedVegasEventIds.Remove(ev.EventID);
+                    groupMemberVegasIds.Remove(ev.EventID);
+                }
+                catch
+                {
+                    // Keep restoring the other members; the UndoBlock covers the rest.
+                }
             }
         }
 

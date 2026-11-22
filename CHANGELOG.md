@@ -1,5 +1,16 @@
 # TellTale WaveSync — Change Summary
 
+## v1.4.3 — Deferred audit items
+
+- **Persistent settings:** all processing toggles and the master anchor are restored across VEGAS sessions from `%LOCALAPPDATA%\TellTale\WaveSync\settings.json`.
+- **Engine health check:** the status line reports extension and native-engine versions; a missing engine disables **Sync** with a reinstall message, and an unexpected engine family is flagged as a mismatch instead of showing **Ready**.
+- **Consistent naming:** remaining "Sync in Place" user-facing strings now say **Ignore Camera Clock Jumps (DST)**.
+- **Honest cancellation:** cancellation is honored until the apply begins; the **Stop** button is disabled during the UndoBlock so it no longer promises to interrupt a committed pass. Closing the dock cancels a running analysis.
+- **Group move rollback:** if a COM call fails partway through a group move, members already moved are restored (start and rate) and the group is reported as skipped. An exception after the move no longer aborts the remaining groups.
+- **Docs:** README now cross-links the recorded-order note to the DST mode.
+- **Cleanup:** old v1.4.0/v1.4.1 installers removed.
+- **Installers:** `TellTale_WaveSync_Setup_v1.4.3.exe` / `.msi`.
+
 ## v1.4.2 — Audit fixes: honest results, edit-safe apply, DST detection
 
 - **Edit-safe apply:** the request now carries each clip's persistent VEGAS `EventID`; the applier re-matches by that ID and rejects any result whose clip moved since analysis. A timeline edit during a long analysis can no longer apply a result to a different clip.
