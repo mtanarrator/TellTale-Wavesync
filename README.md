@@ -10,7 +10,7 @@ TellTale WaveSync is a native VEGAS Pro extension powered by a SIMD-accelerated 
 
 - **1-Click Multi-Cam & Audio Sync:** Automatically aligns selected events or the entire project timeline.
 - **Recorded-Time Source Sync (v1.3):** Cameras that record many short clips are grouped by media folder. A few long clips establish the camera's clock, and every short clip is then positioned from its embedded recorded timestamp — so 2–4 second clips no longer produce random high-confidence matches.
-- **Sync in Place (v1.4):** Lock the existing track/event order. Each source receives one rigid shift, recorded timestamps are never used to reorder or shuffle events, and no tracks are added. Overlaps are reported instead of auto-laned.
+- **Ignore Camera Clock Jumps / DST (v1.4.1):** Placement comes from audio correlation, not recorded timestamps. Each source receives one rigid shift, so a camera clock that jumps an hour forward or backward (a daylight-saving change) cannot move, reorder, or misplace clips. No tracks are added; overlaps are reported instead of auto-laned. While this mode is ON, **Clock Drift Correction**, **Dropped-Frame Auto-Slicing**, and **Prevent Crossfades (Auto-Add Tracks)** are switched off and locked - they cannot take effect in this mode. Clicking a locked option explains the trade-off and lets you override it (which turns this mode off).
 - **Grouped Atomic Sync (v1.4):** Grouped multi-channel audio and grouped A/V events are analyzed through the top-most (`lowest Track.Index`) audio-capable primary only, then moved, split and rate-matched as one unit while preserving every member's internal offset. Host-verified against VEGAS Pro 2027: VEGAS does not auto-move/split/rate companions, so the applier does it atomically inside one UndoBlock.
 - **Long-Take / Wedding Support:** Handles recorder takes that are hours long and longer than the footage. Long media is streamed into a compact energy envelope and only small windows are ever loaded into RAM — so a 2-hour ceremony take no longer stalls or exhausts memory.
 - **Match Validation (NCC):** Envelope correlation scores gate every alignment. Weak or ambiguous matches are left untouched instead of being moved to a wrong position.
@@ -28,7 +28,7 @@ TellTale WaveSync is a native VEGAS Pro extension powered by a SIMD-accelerated 
 ## Installation
 
 ### Option 1: Windows MSI Installer (Recommended)
-Run **`TellTale_WaveSync_Setup_v1.4.msi`**. The installer places all required binaries into `%ProgramData%\Vegas Pro\2027.0\Application Extensions` and automatically removes any prior Inno Setup WaveSync installation and registry entries.
+Run **`TellTale_WaveSync_Setup_v1.4.1.msi`**. The installer places all required binaries into `%ProgramData%\Vegas Pro\2027.0\Application Extensions` and automatically removes any prior Inno Setup WaveSync installation and registry entries.
 
 ### Option 2: Manual Installation
 Copy the compiled extension DLLs (`TellTale_Audiosync.dll`, `telltale_sync_core.dll`, and dependencies) into:
@@ -76,7 +76,7 @@ Wedding/event projects typically contain one long continuous recorder take (ofte
 | `TellTale_Audiosync.dll` / `VegasAudioSync/` | C# (.NET 4.8) VEGAS Pro extension & WPF UI (`TellTale_Audiosync.dll`) |
 | `Installer/` | WiX v4 MSI source (`TellTaleWaveSync.wxs`, `License.rtf`) & legacy Inno script |
 | `TestHarness/` | Standalone verifier — run with `--longtest` for the long-take wedding scenario |
-| `TellTale_WaveSync_Setup_v1.4.msi` | Compiled Windows MSI installer |
+| `TellTale_WaveSync_Setup_v1.4.1.msi` | Compiled Windows MSI installer |
 | `TellTale_WaveSync_Presentation.html` | Edge-compatible offline fullscreen presentation deck |
 | `telltale_wavesync_screenshot.png` | Clean offscreen-rendered UI screenshot |
 | `TellTale_WaveSync_YouTube_Thumbnail.png` | 1280×720 YouTube showcase thumbnail |

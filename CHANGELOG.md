@@ -1,5 +1,14 @@
 # TellTale WaveSync — Change Summary
 
+## v1.4.1 — DST clarity + toggle interlocks
+
+- **Renamed the mode** from "Sync in Place (Lock Order)" to **"Ignore Camera Clock Jumps (DST)"**. The old label described the mechanism; the new one names the problem. `preserve_timeline_order` is unchanged and still defaults **OFF**.
+- **DST behaviour, stated plainly:** placement comes from audio correlation, not recorded timestamps. A camera clock that jumps ±1 h at a daylight-saving boundary therefore cannot move, reorder, or misplace clips; each source gets one rigid audio-derived shift.
+- **Toggle interlocks:** while the DST mode is ON, **Clock Drift Correction**, **Dropped-Frame Auto-Slicing**, and **Prevent Crossfades (Auto-Add Tracks)** are switched off and locked out (dimmed). They cannot take effect in rigid-shift mode: drift/rate is forced to zero, split points are discarded, and no tracks are added.
+- **Override dialog:** clicking a locked option (mouse or keyboard) explains why the combination is not advised. Choosing **Yes** turns the DST mode off and enables the requested option; choosing **No** leaves the lock in place.
+- Docs and engine log strings updated to describe the DST behaviour instead of track-order mechanics.
+- Installers rebuilt as `TellTale_WaveSync_Setup_v1.4.1.exe` / `.msi`.
+
 ## v1.4.0 — Sync in Place + Grouped Atomic Sync
 
 - **Sync in Place (`preserve_timeline_order`):** one rigid shift per source; recorded timestamps are never used to reorder events; no tracks are added; overlaps are reported. Default **OFF**.

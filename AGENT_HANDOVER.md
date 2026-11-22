@@ -4,8 +4,8 @@
 **TellTale WaveSync** is a 100% free, native audio & multi-camera synchronization extension for **VEGAS Pro** (a PluralEyes alternative).
 - **Architecture:**
   - **Rust Native Engine:** `D:\VEGAS Extensions\VEGAS Audio Sync\vegas_sync_core` → compiles to `telltale_sync_core.dll` (30 tests passing, including long-take, source-clock, master-anchor and crossfade-lane suites).
-  - **C# .NET 4.8 Extension & WPF UI:** `D:\VEGAS Extensions\VEGAS Audio Sync\VegasAudioSync` → compiles to `TellTale_Audiosync.dll` (v1.4.0).
-  - **Installer:** `D:\VEGAS Extensions\VEGAS Audio Sync\Installer\TellTaleWaveSync_Installer.iss` → compiles via Inno Setup 6 (`ISCC.exe`) to `TellTale_WaveSync_Setup_v1.4.exe`.
+  - **C# .NET 4.8 Extension & WPF UI:** `D:\VEGAS Extensions\VEGAS Audio Sync\VegasAudioSync` → compiles to `TellTale_Audiosync.dll` (v1.4.1).
+  - **Installer:** `D:\VEGAS Extensions\VEGAS Audio Sync\Installer\TellTaleWaveSync_Installer.iss` → compiles via Inno Setup 6 (`ISCC.exe`) to `TellTale_WaveSync_Setup_v1.4.1.exe`.
 
 ---
 
@@ -53,6 +53,12 @@ The v1.2 behavior still failed on the real "Sync Wedding" project: 2–4 s camer
 - `TimelineApplier` verifies each lane move (`ev.Track.Index`), reuses existing "Sync Lane N" tracks on re-runs, and caps lanes per track.
 
 **Validation on the real files:** all 167 FX3 clips align against the 9 h master in ~30 s; 166/167 transitions match the recorded timeline exactly (the single 30.5 s step is the boundary between the two camera clock bodies). The AX100 group (7 clips) also aligns consistently. `TestHarness --realtest <master> <off> <len> <clip:|...>` reproduces this.
+
+### v1.4.1 - DST clarity + toggle interlocks
+- UI label renamed to **Ignore Camera Clock Jumps (DST)** (was "Sync in Place (Lock Order)"). `preserve_timeline_order` still defaults `false`.
+- In this mode placement is audio-derived (one rigid delta per source), so a ±1 h camera clock jump cannot reorder or misplace clips.
+- Interlocks: with the DST mode ON, `ChkDetectDrift`, `ChkDiscontinuity`, and `ChkPreventCrossfades` are auto-unchecked and locked (dimmed). Insisting on a locked toggle opens a Yes/No warning; **Yes** turns the DST mode off and enables the requested option.
+- Version bumped to `1.4.1`; installers `TellTale_WaveSync_Setup_v1.4.1.exe` / `.msi`.
 
 ### v1.4.0 - Sync in Place + atomic grouped sync (activation)
 Host gate (`TestHarness/verify_group_behavior.cs`) confirmed on VEGAS Pro 2027:

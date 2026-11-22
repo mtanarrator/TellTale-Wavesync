@@ -292,12 +292,17 @@
 
                 <Separator Background="#222634" Margin="0,3"/>
 
-                <CheckBox x:Name="ChkPreserveOrder" Style="{StaticResource ModernToggleSwitch}" IsChecked="False">
+                <CheckBox x:Name="ChkPreserveOrder" Style="{StaticResource ModernToggleSwitch}" IsChecked="False"
+                          ToolTip="DST-proof mode: placement comes from audio correlation, not recorded timestamps, so a camera clock that jumps one hour forward or backward cannot move or reorder clips.">
                     <StackPanel>
-                        <TextBlock Text="Sync in Place (Lock Order)" FontWeight="SemiBold" Foreground="#E2E4E9"/>
-                        <TextBlock Text="One rigid shift per source; never reorders events or adds tracks" FontSize="10" Foreground="#8B92A5"/>
+                        <TextBlock Text="Ignore Camera Clock Jumps (DST)" FontWeight="SemiBold" Foreground="#E2E4E9"/>
+                        <TextBlock Text="Places clips from audio, not recorded timestamps; one rigid shift per source, no reordering, no added tracks" FontSize="10" Foreground="#8B92A5" TextWrapping="Wrap"/>
                     </StackPanel>
                 </CheckBox>
+
+                <TextBlock x:Name="TxtPreserveHint"
+                           Text="Sync in Place is ON. Clock Drift Correction, Dropped-Frame Auto-Slicing, and Prevent Crossfades are locked because they cannot take effect in this mode. Click a locked option to override."
+                           FontSize="9.5" Foreground="#E0A34A" TextWrapping="Wrap" Margin="0,5,0,0" Visibility="Collapsed"/>
             </StackPanel>
         </Border>
 

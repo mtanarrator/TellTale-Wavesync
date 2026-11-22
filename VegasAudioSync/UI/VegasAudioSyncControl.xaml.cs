@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using ScriptPortal.Vegas;
 using VegasAudioSync.Interop;
 using VegasAudioSync.Models;
@@ -19,7 +20,10 @@ namespace VegasAudioSync.UI
         private readonly Vegas _vegas;
         private readonly NativeSyncEngine _engine;
         private readonly Queue<string> _logLines = new Queue<string>();
+        private readonly HashSet<CheckBox> _lockedToggles = new HashSet<CheckBox>();
+        private readonly Dictionary<CheckBox, object> _unlockedToolTips = new Dictionary<CheckBox, object>();
         private volatile bool _cancelRequested;
+        private bool _suppressInterlock;
         private string _cachedFfmpegPath;
 
         public VegasAudioSyncControl() : this(null) { }
@@ -30,7 +34,169 @@ namespace VegasAudioSync.UI
             _vegas = vegas;
             _engine = new NativeSyncEngine();
 
+            SetupToggleInterlocks();
             Loaded += OnControlLoaded;
+        }
+
+        /// <summary>
+        /// Sync in Place is a rigid audio-based mode: camera timestamps are ignored,
+        /// playback rate is never changed, and no tracks or split points are produced.
+        /// The precision toggles below would therefore silently do nothing, so they
+        /// are locked while the mode is active. Clicking a locked toggle explains the
+        /// conflict and lets the operator override it (which turns the mode off).
+        /// </summary>
+        private void SetupToggleInterlocks()
+        {
+            ChkPreserveOrder.Checked += PreserveOrder_Checked;
+            ChkPreserveOrder.Unchecked += PreserveOrder_Unchecked;
+
+            foreach (CheckBox toggle in PreserveConflicts())
+            {
+                toggle.PreviewMouseLeftButtonDown += LockedToggle_PreviewMouseLeftButtonDown;
+                toggle.PreviewKeyDown += LockedToggle_PreviewKeyDown;
+                toggle.Checked += LockedToggle_Checked;
+            }
+        }
+
+        private CheckBox[] PreserveConflicts()
+        {
+            return new CheckBox[] { ChkDetectDrift, ChkDiscontinuity, ChkPreventCrossfades };
+        }
+
+        private static string ToggleTitle(CheckBox toggle)
+        {
+            var panel = toggle.Content as Panel;
+            if (panel != null)
+            {
+                foreach (UIElement child in panel.Children)
+                {
+                    var text = child as TextBlock;
+                    if (text != null && !string.IsNullOrEmpty(text.Text)) return text.Text;
+                }
+            }
+            return "this option";
+        }
+
+        private void PreserveOrder_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_suppressInterlock) return;
+
+            _suppressInterlock = true;
+            try
+            {
+                foreach (CheckBox toggle in PreserveConflicts())
+                {
+                    if (toggle.IsChecked == true)
+                    {
+                        toggle.IsChecked = false;
+                        AppendLog("Sync in Place is ON, so '" + ToggleTitle(toggle) +
+                                  "' was switched off (the two modes cannot run together).");
+                    }
+                    LockToggle(toggle);
+                }
+            }
+            finally
+            {
+                _suppressInterlock = false;
+            }
+
+            if (TxtPreserveHint != null) TxtPreserveHint.Visibility = Visibility.Visible;
+            AppendLog("DST mode ON: a camera clock jump (including a daylight-saving change) cannot move or reorder clips.");
+        }
+
+        private void PreserveOrder_Unchecked(object sender, RoutedEventArgs e)
+        {
+            foreach (CheckBox toggle in PreserveConflicts())
+            {
+                UnlockToggle(toggle);
+            }
+
+            if (TxtPreserveHint != null) TxtPreserveHint.Visibility = Visibility.Collapsed;
+        }
+
+        private void LockToggle(CheckBox toggle)
+        {
+            if (!_lockedToggles.Contains(toggle))
+            {
+                _lockedToggles.Add(toggle);
+                _unlockedToolTips[toggle] = toggle.ToolTip;
+            }
+
+            toggle.Opacity = 0.45;
+            toggle.ToolTip = "Locked while Sync in Place (DST mode) is ON. Click to review and override.";
+        }
+
+        private void UnlockToggle(CheckBox toggle)
+        {
+            if (_lockedToggles.Remove(toggle))
+            {
+                object originalToolTip;
+                if (_unlockedToolTips.TryGetValue(toggle, out originalToolTip))
+                {
+                    toggle.ToolTip = originalToolTip;
+                    _unlockedToolTips.Remove(toggle);
+                }
+            }
+
+            toggle.Opacity = 1.0;
+        }
+
+        private void LockedToggle_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            var toggle = sender as CheckBox;
+            if (toggle == null || !_lockedToggles.Contains(toggle)) return;
+
+            e.Handled = true;
+            ShowInterlockOverride(toggle);
+        }
+
+        private void LockedToggle_PreviewKeyDown(object sender, KeyEventArgs e)
+        {
+            var toggle = sender as CheckBox;
+            if (toggle == null || !_lockedToggles.Contains(toggle)) return;
+
+            if (e.Key == Key.Space || e.Key == Key.Enter)
+            {
+                e.Handled = true;
+                ShowInterlockOverride(toggle);
+            }
+        }
+
+        private void LockedToggle_Checked(object sender, RoutedEventArgs e)
+        {
+            // Safety net for a non-mouse toggle path (access key, automation, etc.).
+            var toggle = sender as CheckBox;
+            if (toggle == null || !_lockedToggles.Contains(toggle)) return;
+
+            toggle.IsChecked = false;
+            ShowInterlockOverride(toggle);
+        }
+
+        private void ShowInterlockOverride(CheckBox toggle)
+        {
+            string name = ToggleTitle(toggle);
+            string message =
+                "Sync in Place (DST mode) is ON.\n\n" +
+                "In this mode every clip in a source is moved by one rigid, audio-derived offset. " +
+                "The camera clock is ignored, playback rate is never changed, overlapping clips are " +
+                "reported instead of being spread onto new tracks, and dropped-frame split points are " +
+                "not applied.\n\n" +
+                "\"" + name + "\" cannot take effect while Sync in Place is ON.\n\n" +
+                "Turn OFF Sync in Place and enable \"" + name + "\" anyway?";
+
+            MessageBoxResult answer = MessageBox.Show(
+                message,
+                "TellTale WaveSync \u2014 Conflicting Options",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No);
+
+            if (answer != MessageBoxResult.Yes) return;
+
+            // Unchecking the mode unlocks all dependent toggles; then honor the override.
+            ChkPreserveOrder.IsChecked = false;
+            toggle.IsChecked = true;
+            AppendLog("Override: Sync in Place was turned off so '" + name + "' could be enabled.");
         }
 
         private async void OnControlLoaded(object sender, RoutedEventArgs e)
@@ -235,7 +401,7 @@ namespace VegasAudioSync.UI
 
                 if (preserveOrder)
                 {
-                    AppendLog("Sync in Place enabled: recorded timestamps will not reorder events; no tracks will be added.");
+                    AppendLog("DST mode (Sync in Place) enabled: recorded timestamps are ignored for placement, so camera clock jumps cannot move or reorder clips; no tracks will be added.");
                 }
 
                 if (masterChoice != null && !string.IsNullOrEmpty(masterChoice.TrackId))
