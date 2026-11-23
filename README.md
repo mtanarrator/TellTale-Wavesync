@@ -1,8 +1,23 @@
 # TellTale WaveSync
 
-**100% Free, High-Precision Audio & Multi-Camera Synchronizer for VEGAS Pro**
+**100% Free, Open-Source (Apache 2.0), High-Precision Audio & Multi-Camera Synchronizer for VEGAS Pro**  
+Website: [www.telltale.video](https://www.telltale.video) · Authored by **Mohamed Anis** (**TellTale FX**)
 
 TellTale WaveSync is a native VEGAS Pro extension powered by a SIMD-accelerated Rust audio analysis engine (`telltale_sync_core.dll`) and a modern WPF interface (`TellTale_Audiosync.dll`). It automatically aligns multi-camera footage, external audio recorders, and podcasts directly on your VEGAS Pro timeline.
+
+---
+
+## Download
+
+| | |
+| :--- | :--- |
+| **Latest release** | [v1.4.3](https://github.com/mtanarrator/TellTale-Wavesync/releases/latest) |
+| **Installer (recommended)** | [TellTale_WaveSync_Setup_v1.4.3.exe](https://github.com/mtanarrator/TellTale-Wavesync/releases/download/v1.4.3/TellTale_WaveSync_Setup_v1.4.3.exe) |
+| **MSI alternative** | [TellTale_WaveSync_Setup_v1.4.3.msi](https://github.com/mtanarrator/TellTale-Wavesync/releases/download/v1.4.3/TellTale_WaveSync_Setup_v1.4.3.msi) |
+| **Checksums** | [SHA256SUMS.txt](SHA256SUMS.txt) |
+| **Release notes** | [RELEASE_NOTES_v1.4.3.md](RELEASE_NOTES_v1.4.3.md) |
+
+> The v1.4.3 installer is not yet code-signed. Windows SmartScreen may show **Unknown publisher**; verify the SHA-256 in `SHA256SUMS.txt` before running.
 
 ---
 
@@ -32,10 +47,13 @@ TellTale WaveSync is a native VEGAS Pro extension powered by a SIMD-accelerated 
 
 ## Installation
 
-### Option 1: Windows MSI Installer (Recommended)
-Run **`TellTale_WaveSync_Setup_v1.4.3.msi`**. The installer places all required binaries into `%ProgramData%\Vegas Pro\2027.0\Application Extensions` and automatically removes any prior Inno Setup WaveSync installation and registry entries.
+### Option 1: Windows Installer (Recommended)
+Download and run **`TellTale_WaveSync_Setup_v1.4.3.exe`** from the Releases page. The installer places all required binaries into `%ProgramData%\Vegas Pro\2027.0\Application Extensions` and removes legacy WaveSync files.
 
-### Option 2: Manual Installation
+### Option 2: Windows MSI
+Download and run **`TellTale_WaveSync_Setup_v1.4.3.msi`**. It installs the same binaries and removes any prior Inno Setup WaveSync installation and registry entries.
+
+### Option 3: Manual Installation
 Copy the compiled extension DLLs (`TellTale_Audiosync.dll`, `telltale_sync_core.dll`, and dependencies) into:
 ```text
 C:\ProgramData\Vegas Pro\<version>\Application Extensions\
@@ -77,14 +95,17 @@ Wedding/event projects typically contain one long continuous recorder take (ofte
 
 | Path | Description |
 | :--- | :--- |
-| `vegas_sync_core/` | Rust native audio synchronization engine (`telltale_sync_core.dll`) |
-| `TellTale_Audiosync.dll` / `VegasAudioSync/` | C# (.NET 4.8) VEGAS Pro extension & WPF UI (`TellTale_Audiosync.dll`) |
-| `Installer/` | WiX v4 MSI source (`TellTaleWaveSync.wxs`, `License.rtf`) & legacy Inno script |
-| `TestHarness/` | Standalone verifier — run with `--longtest` for the long-take wedding scenario |
-| `TellTale_WaveSync_Setup_v1.4.3.msi` | Compiled Windows MSI installer |
-| `TellTale_WaveSync_Presentation.html` | Edge-compatible offline fullscreen presentation deck |
-| `telltale_wavesync_screenshot.png` | Clean offscreen-rendered UI screenshot |
-| `TellTale_WaveSync_YouTube_Thumbnail.png` | 1280×720 YouTube showcase thumbnail |
+| `vegas_sync_core/` | Rust native audio synchronization engine (`telltale_sync_core.dll`) — crate name is kept for FFI/ABI stability |
+| `VegasAudioSync/` | C# (.NET 4.8) VEGAS Pro extension and WPF UI (`TellTale_Audiosync.dll`) |
+| `Installer/` | Inno Setup (`TellTaleWaveSync_Installer.iss`) and WiX v4 MSI (`TellTaleWaveSync.wxs`) sources |
+| `TestHarness/` | Standalone verifier — `--longtest`, `--ordertest`, `--grouptest`, `--lanetest`, `--canceltest` |
+| `LICENSE` / `NOTICE` | Apache License 2.0 and attribution |
+| `CHANGELOG.md` | Full release history (v1.0 → v1.4.3) |
+| `RELEASE_NOTES_v1.4.3.md` | GitHub release body and install notes |
+| `SHA256SUMS.txt` | Checksums for the v1.4.3 installers |
+| `TellTale_WaveSync_Presentation.html` | Offline fullscreen presentation deck |
+| `telltale_wavesync_screenshot.png` | Offscreen-rendered UI screenshot |
+| `TellTale_WaveSync_YouTube_Thumbnail.png` | 1280×720 showcase thumbnail |
 
 ---
 
@@ -92,19 +113,26 @@ Wedding/event projects typically contain one long continuous recorder take (ofte
 
 ### 1. Rust Core Engine (`vegas_sync_core`)
 ```powershell
-cd "D:\VEGAS Extensions\VEGAS Audio Sync\vegas_sync_core"
+cd vegas_sync_core
 cargo test
 cargo build --release
 ```
+The output is `vegas_sync_core\target\release\telltale_sync_core.dll`.
 
 ### 2. C# VEGAS Pro Extension (`VegasAudioSync`)
 ```powershell
-dotnet build "VegasAudioSync\VegasAudioSync.csproj" -c Release
+dotnet build VegasAudioSync\VegasAudioSync.csproj -c Release
 ```
-Targets **.NET Framework 4.8** (x64). Ensure `telltale_sync_core.dll` is copied alongside `TellTale_Audiosync.dll` (the build does this automatically when the Rust release DLL exists).
+Targets **.NET Framework 4.8** (x64). The build copies `telltale_sync_core.dll` next to `TellTale_Audiosync.dll` when the Rust release DLL exists.
 
-### 3. Windows Installer (`Installer`)
-Compile `Installer\TellTaleWaveSync_Installer.iss` using **Inno Setup 6** (`ISCC.exe`).
+### 3. Windows Installers (`Installer`)
+```powershell
+# Inno Setup 6
+ISCC.exe Installer\TellTaleWaveSync_Installer.iss
+
+# WiX v4
+wix build Installer\TellTaleWaveSync.wxs -arch x64 -ext WixToolset.UI.wixext -o Installer\Output\TellTale_WaveSync_Setup_v1.4.3.msi
+```
 
 ---
 
@@ -112,11 +140,20 @@ Compile `Installer\TellTaleWaveSync_Installer.iss` using **Inno Setup 6** (`ISCC
 
 ```powershell
 cd vegas_sync_core
-cargo test                      # 30 tests, including long-take, source-clock and master-anchor suites
+cargo test                      # 39 tests: long-take, source-clock, preserve-order, clock-jump
 
 cd ..
 dotnet build TestHarness\TestHarness.csproj -c Release
-TestHarness\bin\Release\net48\TestHarness.exe            # FFI smoke test
-TestHarness\bin\Release\net48\TestHarness.exe --longtest # 7-minute take + 3 camera clips
-TestHarness\bin\Release\net48\TestHarness.exe --canceltest # verifies the Stop button path
+TestHarness\bin\Release\net48\TestHarness.exe              # FFI smoke test
+TestHarness\bin\Release\net48\TestHarness.exe --longtest   # long take + camera clips
+TestHarness\bin\Release\net48\TestHarness.exe --ordertest  # DST / order preservation
+TestHarness\bin\Release\net48\TestHarness.exe --grouptest  # atomic group planner
+TestHarness\bin\Release\net48\TestHarness.exe --lanetest   # crossfade lane planner
+TestHarness\bin\Release\net48\TestHarness.exe --canceltest # Stop button path
 ```
+
+---
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

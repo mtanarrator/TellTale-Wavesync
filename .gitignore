@@ -1,4 +1,4 @@
-vegas_sync_core/
+vegas_sync_core/target/
 VegasAudioSync/bin/
 VegasAudioSync/obj/
 TestHarness/bin/
