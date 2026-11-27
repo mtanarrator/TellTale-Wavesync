@@ -1,6 +1,10 @@
+//! C ABI surface. Raw pointers are validated by the callers (the managed host);
+//! these functions are intentionally safe `extern "C"` entry points.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
-use std::panic::catch_unwind;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::models::SyncTaskRequest;
 
@@ -17,24 +21,35 @@ pub const VEGAS_SYNC_ERR_PANIC: i32 = -99;
 
 #[no_mangle]
 pub extern "C" fn vegas_sync_version() -> *mut c_char {
-    let version = concat!(
-        "telltale_sync_core v",
-        env!("CARGO_PKG_VERSION"),
-        " (SIMD-enabled Rust Native Engine)"
-    );
-    match CString::new(version) {
-        Ok(c_str) => c_str.into_raw(),
+    // A panic must never cross the C ABI boundary; report null instead.
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let version = concat!(
+            "telltale_sync_core v",
+            env!("CARGO_PKG_VERSION"),
+            " (SIMD-enabled Rust Native Engine)"
+        );
+        match CString::new(version) {
+            Ok(c_str) => c_str.into_raw(),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }));
+
+    match result {
+        Ok(ptr) => ptr,
         Err(_) => std::ptr::null_mut(),
     }
 }
 
 #[no_mangle]
 pub extern "C" fn vegas_sync_free_string(ptr: *mut c_char) {
-    if !ptr.is_null() {
-        unsafe {
-            let _ = CString::from_raw(ptr);
-        }
+    if ptr.is_null() {
+        return;
     }
+
+    // Ignore any panic raised while reclaiming the C string.
+    let _ = catch_unwind(AssertUnwindSafe(|| unsafe {
+        let _ = CString::from_raw(ptr);
+    }));
 }
 
 pub struct ProgressReporter {
@@ -79,6 +94,16 @@ pub extern "C" fn vegas_sync_execute(
             return VEGAS_SYNC_ERR_NULL_PTR;
         }
 
+        // Initialize the out parameter immediately so that an early return or a
+        // panic can never leave the caller with an uninitialized pointer.
+        unsafe {
+            *out_json_manifest_ptr = std::ptr::null_mut();
+        }
+
+        // Capture engine warnings for this run and surface them in the manifest.
+        crate::logging::install();
+        crate::logging::begin();
+
         let json_str = match unsafe { CStr::from_ptr(json_request_ptr) }.to_str() {
             Ok(s) => s,
             Err(_) => return VEGAS_SYNC_ERR_INVALID_UTF8,
@@ -97,7 +122,7 @@ pub extern "C" fn vegas_sync_execute(
         reporter.report(0.01, "Sync engine initialized");
 
         // Execute the synchronization pipeline
-        let manifest = match crate::engine::run_sync_pipeline(&request, &reporter) {
+        let mut manifest = match crate::engine::run_sync_pipeline(&request, &reporter) {
             Ok(m) => m,
             Err(e) => {
                 if e == crate::audio::decoder::CANCELLED {
@@ -107,6 +132,14 @@ pub extern "C" fn vegas_sync_execute(
                 return VEGAS_SYNC_ERR_PROCESSING;
             }
         };
+
+        // Decoder/engine warnings (partial FFmpeg reads, unreadable chunks, ...)
+        // were previously dropped because no logger was installed.
+        for warning in crate::logging::drain(50) {
+            if !manifest.warnings.contains(&warning) {
+                manifest.warnings.push(warning);
+            }
+        }
 
         reporter.report(1.0, "Generating sync manifest");
 

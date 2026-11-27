@@ -1,5 +1,31 @@
 # TellTale WaveSync — Change Summary
 
+## v2.0.0 — Global matching & trustworthy metadata
+
+- **Global matching is now the default:** clips are matched pairwise through a sparse audio graph and solved together as relative positions. No single master anchor is required; the selected master only pins the overall gauge.
+- **Automatic legacy fallback:** sparse/sequence-only graphs, fewer than two analyzable events, more than 400 unique media paths, or roughly 512 MB of retained audio fall back to the unchanged master-anchor pipeline with a clear warning.
+- **Time source and clip order controls:** **Advanced** gains Time source (Auto / Recorded date / Timecode / Filename timestamp / File modified time / Ignore) and Clip order (Auto / Strict / Timecode / Preserve timeline order / No ordering). Both persist in settings; **Preserve timeline order** keeps the legacy DST path.
+- **Clock validation:** device clocks more than 30 days from the project median are treated as untrusted — their epoch is not used for sequence offsets and the warning names the device. Container timecode is handled as seconds-of-day and unwrapped across midnight.
+- **Honest placement labels:** clips without an audio edge are placed by clock/order where possible and marked `clock-placed`; prior-only components keep their position instead of guessing. B-roll (clips under 15 s) never anchors a sequence and may receive at most one audio edge.
+- **DeviceIdentity organizer:** cameras resolve to model names (`Sony A7 III`, `Sony FX3`), while recorders keep folder identity (`Tascam_wesele (audio1)` / `(audio2)`). The preview can show Camera / Recorder / B-roll roles.
+- **No audio duplication:** a camera stays one video event with embedded audio; each recorder folder gets one audio track. Duplicate audio tracks created by older builds are not recreated and should be cleaned manually.
+- **Tests and rollback:** Rust tests cover the synthetic global chain, sparse fallback, untrusted clocks, B-roll anchoring, and legacy parity. The pre-v2 build was archived before the change (`Backups\WaveSync_legacy_20261127_123741.zip`).
+
+## v1.5.0 — Post-v1.4.3 audit fixes
+
+- **Dropped-frame slicing works on its own:** discontinuity detection no longer requires **Fix gradual sync drift**. The measured step jump is carried to the applier, the post-drop segment is shifted, and the duplicated tail is trimmed so the repair stays on one track.
+- **Playback-rate round-trip:** an existing `PlaybackRate` is sent to the engine and its length is scaled to preserve the media span. The engine reports an absolute target (it re-measures the source media each run), so re-runs are idempotent. WaveSync records the rates it writes per project/event, so its own earlier stretch is updated or cleared while a deliberate manual retime — even inside 0.9–1.1 — is preserved.
+- **Project-switch safety:** opening or closing a project during analysis cancels the run and discards the manifest; lifecycle events also refresh the track list.
+- **Copyable, throttled log:** the activity log is a read-only text box with a **Copy Log** button and batched updates instead of a full rebuild per line.
+- **Defaults match the docs:** **Include video clips** and **Keep overlapping clips on separate tracks** now start **ON** (explicit saved `false` still wins).
+- **Organize Tracks by Device:** a new preview-first action groups timeline media by camera/recorder using ffprobe metadata, filename prefixes, and folders. Cameras get exactly one `CAM n — Name (V)` track with embedded audio (even if the mic is silent); recorders get `REC n — Name`. No camera audio is duplicated or muted. Preview supports rename/include/merge/split-by-folder, the pass is one Undo step, source tracks are kept, and re-runs reuse tracks.
+- **Friendlier panel:** quick-setup presets (Multicam, Long recording, Damaged footage, Reset defaults), options grouped by intent with **Advanced** collapsed, a post-run result summary with an undo hint, and a **Warnings only** log filter. The master dropdown now reads **Auto (recommended)**.
+- **Envelope automation:** new Sync Lanes create missing envelopes and copy points plus base Volume/Pan/Composite levels.
+- **Engine decoders:** partial FFmpeg decodes are reported as warnings instead of silent success; the Symphonia resampler flushes its tail.
+- **Installer:** numeric VEGAS version ordering (`2027.0` beats `22.0`), relative build paths, uninstall cleanup for **all VEGAS versions** copies, and no `HKCU` access from the SYSTEM-context MSI action.
+- **Compatibility:** manifests remain backward compatible (`split_points_seconds` is still emitted; missing `playback_rate` reads as 1.0).
+- **Known limitation:** grouped A/V lane relocation is implemented but disabled pending VEGAS host validation; the MSI target remains VEGAS 2027 only.
+
 ## v1.4.3 — Deferred audit items
 
 - **Persistent settings:** all processing toggles and the master anchor are restored across VEGAS sessions from `%LOCALAPPDATA%\TellTale\WaveSync\settings.json`.

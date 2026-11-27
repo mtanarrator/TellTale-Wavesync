@@ -104,6 +104,8 @@ fn test_end_to_end_pipeline_sync_accuracy() {
                     is_muted: false,
                     source_key: None,
                     recorded_time_seconds: None,
+                    playback_rate: 1.0,
+                    ..EventDescriptor::default()
                 }],
             },
             TrackDescriptor {
@@ -122,12 +124,15 @@ fn test_end_to_end_pipeline_sync_accuracy() {
                     is_muted: false,
                     source_key: None,
                     recorded_time_seconds: None,
+                    playback_rate: 1.0,
+                    ..EventDescriptor::default()
                 }],
             },
         ],
         groups: Vec::new(),
         options: SyncOptions {
             preserve_timeline_order: false,
+            global_matching: false,
             internal_sample_rate: sample_rate,
             voice_activity_filter: false,
             detect_drift: false,
@@ -137,6 +142,7 @@ fn test_end_to_end_pipeline_sync_accuracy() {
             speed_of_sound_compensation: false,
             discontinuity_threshold_ms: 50.0,
             ffmpeg_path: None,
+            ..SyncOptions::default()
         },
     };
 
@@ -150,13 +156,24 @@ fn test_end_to_end_pipeline_sync_accuracy() {
     let manifest = result.unwrap();
     assert!(manifest.success);
 
-    let slave_res = manifest.events.iter().find(|e| e.event_id == "Ev_Slave_0").unwrap();
+    let slave_res = manifest
+        .events
+        .iter()
+        .find(|e| e.event_id == "Ev_Slave_0")
+        .unwrap();
     assert!(slave_res.is_aligned, "Slave should be marked aligned");
-    assert!(slave_res.confidence > 0.8, "Confidence should be high, was {}", slave_res.confidence);
+    assert!(
+        slave_res.confidence > 0.8,
+        "Confidence should be high, was {}",
+        slave_res.confidence
+    );
 
     println!(
         "Master start: {}, Slave original: {}, Slave resolved: {}, Expected: {}",
-        master_start_tc, slave_initial_tc, slave_res.resolved_start_seconds, expected_slave_resolved_tc
+        master_start_tc,
+        slave_initial_tc,
+        slave_res.resolved_start_seconds,
+        expected_slave_resolved_tc
     );
 
     assert!(
@@ -225,6 +242,8 @@ fn test_end_to_end_pipeline_sync_accuracy_slave_after_master() {
                     is_muted: false,
                     source_key: None,
                     recorded_time_seconds: None,
+                    playback_rate: 1.0,
+                    ..EventDescriptor::default()
                 }],
             },
             TrackDescriptor {
@@ -243,12 +262,15 @@ fn test_end_to_end_pipeline_sync_accuracy_slave_after_master() {
                     is_muted: false,
                     source_key: None,
                     recorded_time_seconds: None,
+                    playback_rate: 1.0,
+                    ..EventDescriptor::default()
                 }],
             },
         ],
         groups: Vec::new(),
         options: SyncOptions {
             preserve_timeline_order: false,
+            global_matching: false,
             internal_sample_rate: sample_rate,
             voice_activity_filter: false,
             detect_drift: false,
@@ -258,6 +280,7 @@ fn test_end_to_end_pipeline_sync_accuracy_slave_after_master() {
             speed_of_sound_compensation: false,
             discontinuity_threshold_ms: 50.0,
             ffmpeg_path: None,
+            ..SyncOptions::default()
         },
     };
 
@@ -271,13 +294,24 @@ fn test_end_to_end_pipeline_sync_accuracy_slave_after_master() {
     let manifest = result.unwrap();
     assert!(manifest.success);
 
-    let slave_res = manifest.events.iter().find(|e| e.event_id == "Ev_Slave_0").unwrap();
+    let slave_res = manifest
+        .events
+        .iter()
+        .find(|e| e.event_id == "Ev_Slave_0")
+        .unwrap();
     assert!(slave_res.is_aligned, "Slave should be marked aligned");
-    assert!(slave_res.confidence > 0.8, "Confidence should be high, was {}", slave_res.confidence);
+    assert!(
+        slave_res.confidence > 0.8,
+        "Confidence should be high, was {}",
+        slave_res.confidence
+    );
 
     println!(
         "Master start: {}, Slave original: {}, Slave resolved: {}, Expected: {}",
-        master_start_tc, slave_initial_tc, slave_res.resolved_start_seconds, expected_slave_resolved_tc
+        master_start_tc,
+        slave_initial_tc,
+        slave_res.resolved_start_seconds,
+        expected_slave_resolved_tc
     );
 
     assert!(

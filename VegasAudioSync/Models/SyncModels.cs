@@ -43,6 +43,34 @@ namespace VegasAudioSync.Models
 
         [DataMember(Name = "ffmpeg_path")]
         public string FfmpegPath { get; set; }
+
+        /// <summary>
+        /// Preferred clock for ordering/placement: auto, recorded, timecode,
+        /// filename, file_time or ignore. Additive option; legacy engines ignore it.
+        /// </summary>
+        [DataMember(Name = "time_source")]
+        public string TimeSource { get; set; } = "auto";
+
+        /// <summary>
+        /// Clip ordering strategy: auto, strict, timecode, preserve or none.
+        /// </summary>
+        [DataMember(Name = "clip_order")]
+        public string ClipOrder { get; set; } = "auto";
+
+        /// <summary>
+        /// Reserved for the global solver. Global matching is on by default; the
+        /// engine falls back automatically for sparse or very large projects.
+        /// </summary>
+        [DataMember(Name = "global_matching")]
+        public bool GlobalMatching { get; set; } = true;
+
+        /// <summary>Clips shorter than this are tagged as b-roll.</summary>
+        [DataMember(Name = "broll_max_seconds")]
+        public double BrollMaxSeconds { get; set; } = 15.0;
+
+        /// <summary>Nominal project frame rate used by timecode parsing.</summary>
+        [DataMember(Name = "project_frame_rate")]
+        public double ProjectFrameRate { get; set; } = 25.0;
     }
 
     [DataContract]
@@ -80,6 +108,13 @@ namespace VegasAudioSync.Models
         [DataMember(Name = "media_length_seconds")]
         public double MediaLengthSeconds { get; set; }
 
+        /// <summary>
+        /// Timeline playback rate of the event as it was when analysis started.
+        /// The applier uses it to preserve the media span when it changes the rate.
+        /// </summary>
+        [DataMember(Name = "playback_rate")]
+        public double PlaybackRate { get; set; } = 1.0;
+
         [DataMember(Name = "is_muted")]
         public bool IsMuted { get; set; }
 
@@ -96,6 +131,51 @@ namespace VegasAudioSync.Models
         /// </summary>
         [DataMember(Name = "recorded_time_seconds")]
         public double? RecordedTimeSeconds { get; set; }
+
+        /// <summary>
+        /// Container timecode as seconds of day (frames ignored). Null when the media
+        /// does not carry timecode or ffprobe is unavailable.
+        /// </summary>
+        [DataMember(Name = "timecode_seconds", EmitDefaultValue = false)]
+        public double? TimecodeSeconds
+        {
+            get { return _timecodeSeconds; }
+            set { _timecodeSeconds = SanitizeSeconds(value); }
+        }
+        private double? _timecodeSeconds;
+
+        /// <summary>
+        /// Epoch seconds parsed from a timestamp embedded in the filename
+        /// (e.g. 260815_081034). Interpreted as local time.
+        /// </summary>
+        [DataMember(Name = "filename_time_seconds", EmitDefaultValue = false)]
+        public double? FilenameTimeSeconds
+        {
+            get { return _filenameTimeSeconds; }
+            set { _filenameTimeSeconds = SanitizeSeconds(value); }
+        }
+        private double? _filenameTimeSeconds;
+
+        /// <summary>Epoch seconds of FileInfo.LastWriteTimeUtc.</summary>
+        [DataMember(Name = "file_time_seconds", EmitDefaultValue = false)]
+        public double? FileTimeSeconds
+        {
+            get { return _fileTimeSeconds; }
+            set { _fileTimeSeconds = SanitizeSeconds(value); }
+        }
+        private double? _fileTimeSeconds;
+
+        /// <summary>normal for regular clips, broll for clips shorter than the b-roll threshold.</summary>
+        [DataMember(Name = "sync_role")]
+        public string SyncRole { get; set; } = "normal";
+
+        private static double? SanitizeSeconds(double? value)
+        {
+            if (!value.HasValue) return null;
+            double seconds = value.Value;
+            if (double.IsNaN(seconds) || double.IsInfinity(seconds)) return null;
+            return seconds;
+        }
     }
 
     [DataContract]
@@ -193,6 +273,21 @@ namespace VegasAudioSync.Models
     }
 
     [DataContract]
+    public class SplitPoint
+    {
+        /// <summary>Discontinuity position in seconds, event-relative.</summary>
+        [DataMember(Name = "timestamp_seconds")]
+        public double TimestampSeconds { get; set; }
+
+        /// <summary>
+        /// Delay after minus delay before the discontinuity. The right-hand segment
+        /// is shifted by the negative of this value in timeline seconds.
+        /// </summary>
+        [DataMember(Name = "step_jump_seconds")]
+        public double StepJumpSeconds { get; set; }
+    }
+
+    [DataContract]
     public class EventSyncResult
     {
         [DataMember(Name = "event_id")]
@@ -221,6 +316,13 @@ namespace VegasAudioSync.Models
 
         [DataMember(Name = "split_points_seconds")]
         public List<double> SplitPointsSeconds { get; set; } = new List<double>();
+
+        /// <summary>
+        /// Split points with their step jump. When present this is preferred over
+        /// <see cref="SplitPointsSeconds"/> (which carries timestamps only).
+        /// </summary>
+        [DataMember(Name = "split_points")]
+        public List<SplitPoint> SplitPoints { get; set; } = new List<SplitPoint>();
 
         [DataMember(Name = "is_aligned")]
         public bool IsAligned { get; set; }

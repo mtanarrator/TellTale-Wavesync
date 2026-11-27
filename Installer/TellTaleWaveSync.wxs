@@ -3,7 +3,7 @@
 
   <Package Name="TellTale WaveSync"
            Manufacturer="TellTale FX"
-           Version="1.4.3.0"
+           Version="2.0.0.0"
            UpgradeCode="D37E6081-3E2A-4D78-9B90-1DEB0703C14F"
            Scope="perMachine"
            InstallerVersion="500">
@@ -18,10 +18,14 @@
     <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
     <ui:WixUI Id="WixUI_Minimal" />
 
-    <!-- Remove any previous Inno Setup installation and registry entries of WaveSync -->
+    <!-- Remove any previous Inno Setup installation and registry entries of WaveSync.
+         Only HKLM hives are probed: this custom action runs deferred with
+         Impersonate="no" (LocalSystem), so a HKCU path would resolve to the SYSTEM
+         profile's hive and never match the interactive user's Inno uninstall key.
+         Per-user Inno installs are therefore not auto-removed; uninstall them manually. -->
     <CustomAction Id="RemoveLegacyInnoWaveSync"
                   Directory="INSTALLFOLDER"
-                  ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command &quot;$keys = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{D37E6081-3E2A-4D78-9B90-1DEB0703C14F}_is1','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{D37E6081-3E2A-4D78-9B90-1DEB0703C14F}_is1','HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{D37E6081-3E2A-4D78-9B90-1DEB0703C14F}_is1'); foreach ($k in $keys) { if (Test-Path $k) { $u = (Get-ItemProperty $k -ErrorAction SilentlyContinue).UninstallString; if ($u) { $exe = $u.Trim('\&quot;'); if (Test-Path $exe) { Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -WindowStyle Hidden } }; Remove-Item $k -Recurse -Force -ErrorAction SilentlyContinue } }&quot;"
+                  ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command &quot;$keys = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{D37E6081-3E2A-4D78-9B90-1DEB0703C14F}_is1','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{D37E6081-3E2A-4D78-9B90-1DEB0703C14F}_is1'); foreach ($k in $keys) { if (Test-Path $k) { $u = (Get-ItemProperty $k -ErrorAction SilentlyContinue).UninstallString; if ($u) { $exe = $u.Trim('\&quot;'); if (Test-Path $exe) { Start-Process -FilePath $exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -WindowStyle Hidden } }; Remove-Item $k -Recurse -Force -ErrorAction SilentlyContinue } }&quot;"
                   Execute="deferred"
                   Impersonate="no"
                   Return="ignore" />
@@ -30,6 +34,17 @@
       <Custom Action="RemoveLegacyInnoWaveSync" Before="InstallFiles" Condition="NOT Installed" />
     </InstallExecuteSequence>
 
+    <!-- Install target: only the newest VEGAS Pro layout (BorisFX-era 2027.x under
+         %ProgramData%\Vegas Pro\<version>\Application Extensions).
+         Older MAGIX-era versions (22.0, 21.0, 20.0, 19.0 under %ProgramData%\VEGAS Pro)
+         are intentionally NOT installed by this MSI: their existence can only be detected
+         with an extension-based directory search (util:DirectorySearch / AppSearch), and a
+         static <Directory> per version would create the folder and drop the DLLs into
+         versions the user does not own. Use the Inno Setup installer
+         (TellTaleWaveSync_Installer.iss) for multi-version deployment - its "allvegas"
+         task enumerates the installed version folders at runtime.
+         TODO(wix-multi-version): add per-version components (new GUIDs) once a reliable
+         per-version existence test is available. -->
     <StandardDirectory Id="CommonAppDataFolder">
       <Directory Id="VegasProDir" Name="Vegas Pro">
         <Directory Id="VegasVerDir" Name="2027.0">

@@ -7,8 +7,10 @@ using System.Text;
 namespace VegasAudioSync.UI
 {
     /// <summary>
-    /// Operator choices persisted between VEGAS sessions. All optional processing
-    /// toggles default to off; the master anchor defaults to Auto-Detect.
+    /// Operator choices persisted between VEGAS sessions. Optional processing
+    /// toggles default to off, except Include video clips, Keep overlapping
+    /// clips on separate tracks and Global matching which default to on; the
+    /// master anchor defaults to Auto (recommended).
     /// </summary>
     [DataContract]
     public sealed class UserSettings
@@ -32,10 +34,13 @@ namespace VegasAudioSync.UI
         public bool SelectedOnly { get; set; }
 
         [DataMember(Name = "include_video")]
-        public bool IncludeVideo { get; set; }
+        public bool IncludeVideo { get; set; } = true;
 
         [DataMember(Name = "prevent_crossfades")]
-        public bool PreventCrossfades { get; set; }
+        public bool PreventCrossfades { get; set; } = true;
+
+        [DataMember(Name = "global_matching")]
+        public bool GlobalMatching { get; set; } = true;
 
         [DataMember(Name = "master_track_id")]
         public string MasterTrackId { get; set; }
@@ -45,6 +50,28 @@ namespace VegasAudioSync.UI
 
         [DataMember(Name = "master_track_is_video")]
         public bool MasterTrackIsVideo { get; set; }
+
+        /// <summary>Preferred clock: auto, recorded, timecode, filename, file_time or ignore.</summary>
+        [DataMember(Name = "time_source")]
+        public string TimeSource { get; set; } = "auto";
+
+        /// <summary>Clip ordering: auto, strict, timecode, preserve or none.</summary>
+        [DataMember(Name = "clip_order")]
+        public string ClipOrder { get; set; } = "auto";
+
+        [OnDeserializing]
+        private void ApplyDocumentedDefaults(StreamingContext context)
+        {
+            // DataContractJsonSerializer skips constructors and property
+            // initializers, so a settings file written before a field existed would
+            // otherwise load it as false. Seed the documented defaults; values
+            // present in the file still overwrite them.
+            IncludeVideo = true;
+            PreventCrossfades = true;
+            GlobalMatching = true;
+            TimeSource = "auto";
+            ClipOrder = "auto";
+        }
     }
 
     /// <summary>

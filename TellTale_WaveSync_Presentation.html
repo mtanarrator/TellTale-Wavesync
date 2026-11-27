@@ -335,7 +335,7 @@
         <div class="slide-info-bar">
           <div>
             <div class="slide-number-pill">Feature 01 of 06 • Temporal Drift</div>
-            <h2 class="slide-heading">Clock Drift Correction (RANSAC PPM)</h2>
+            <h2 class="slide-heading">Fix gradual sync drift (RANSAC PPM)</h2>
             <p class="slide-desc">Cameras and field recorders have independent quartz oscillators that run at slightly different clock speeds. WaveSync measures the micro-drift in parts-per-million and smoothly resamples playback speed.</p>
           </div>
           <span class="slide-badge" id="badge-drift">+45.0 PPM SLIPPAGE</span>
@@ -358,12 +358,12 @@
         </div>
       </article>
 
-      <!-- SLIDE 2: Sub-Sample Phase Super-Resolution -->
+      <!-- SLIDE 2: Maximum precision phase alignment -->
       <article class="slide" id="slide-1">
         <div class="slide-info-bar">
           <div>
             <div class="slide-number-pill">Feature 02 of 06 • Acoustic Phase Lock</div>
-            <h2 class="slide-heading">Sub-Sample Super-Resolution Alignment</h2>
+            <h2 class="slide-heading">Maximum precision alignment</h2>
             <p class="slide-desc">Video frames (~33ms) are far too coarse for sound. When multiple mics capture the same voice even 5ms apart, playing them together causes hollow phase cancellation (comb filtering). WaveSync fits peaks down to &lt; 0.1 samples.</p>
           </div>
           <span class="slide-badge" id="badge-phase">PARABOLIC FIT: ACTIVE</span>
@@ -378,7 +378,7 @@
               <input type="range" id="sl-phase" min="-100" max="100" value="0">
               <span id="lbl-phase" style="color:#FFF; font-family:monospace;">0.00 Samples</span>
             </div>
-            <button id="btn-lock-phase" class="btn btn-blue">🎯 Lock Sub-Sample Apex</button>
+            <button id="btn-lock-phase" class="btn btn-blue">🎯 Lock maximum-precision apex</button>
           </div>
           <div class="takeaway-tag">
             Editor Takeaway: <strong>Full, punchy dialogue with zero tinny comb-filtering echo.</strong>
@@ -386,12 +386,12 @@
         </div>
       </article>
 
-      <!-- SLIDE 3: Dropped-Frame Auto-Slicing -->
+      <!-- SLIDE 3: Repair dropped frames (VFR) -->
       <article class="slide" id="slide-2">
         <div class="slide-info-bar">
           <div>
             <div class="slide-number-pill">Feature 03 of 06 • Glitch Recovery</div>
-            <h2 class="slide-heading">Dropped-Frame Auto-Slicing (VFR Repair)</h2>
+            <h2 class="slide-heading">Repair dropped frames (VFR)</h2>
             <p class="slide-desc">Overheating mirrorless cameras and smartphones (Variable Frame Rate) randomly drop frames mid-take. Aligning the start throws the rest out of sync. WaveSync spots the exact step-jump, slices the event, and re-syncs both halves.</p>
           </div>
           <span class="slide-badge" id="badge-slice">STEP DETECTOR: 50ms</span>
@@ -443,7 +443,7 @@
         <div class="slide-info-bar">
           <div>
             <div class="slide-number-pill">Feature 05 of 06 • Timeline Safety</div>
-            <h2 class="slide-heading">Scope: Selected Takes &amp; Tracks Only</h2>
+            <h2 class="slide-heading">Selected clips only</h2>
             <p class="slide-desc">On massive timelines with hundreds of clips, you often just want to align two specific takes without disturbing surrounding edits. WaveSync places an isolation shield on unselected tracks so only active items move.</p>
           </div>
           <span class="slide-badge" id="badge-scope">SURGICAL MODE</span>
@@ -758,7 +758,7 @@
 
 
     /* --------------------------------------------------------------------
-       SLIDE 2: SUB-SAMPLE SUPER-RESOLUTION
+       SLIDE 2: MAXIMUM PRECISION ALIGNMENT
        -------------------------------------------------------------------- */
     let subSampleOffset = 0.0;
     const slPhase = document.getElementById('sl-phase');

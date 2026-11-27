@@ -12,11 +12,11 @@ use crate::correlation::{AcousticFingerprinter, CoarseAligner, GccPhat};
 use crate::drift::{DiscontinuityDetector, DriftObservation, RansacRegression};
 use crate::ffi::ProgressReporter;
 use crate::graph::{MultiTrackGraphSolver, SyncEdge};
-use crate::models::{EventDescriptor, EventSyncResult, SyncManifest, SyncTaskRequest};
+use crate::models::{EventDescriptor, EventSyncResult, SplitPoint, SyncManifest, SyncTaskRequest};
 
 /// Events shorter than this keep their PCM in memory (cheap, and allows a single
 /// high-precision full-buffer GCC-PHAT pass).
-const RETAIN_SAMPLES_SECONDS: f64 = 300.0;
+pub(crate) const RETAIN_SAMPLES_SECONDS: f64 = 300.0;
 
 /// Absolute ceiling on how much of a single take is analyzed. Wedding/event
 /// recordings are long, but there is no practical benefit beyond that.
@@ -37,18 +37,19 @@ const MIN_OVERLAP_SECONDS: f64 = 1.0;
 const FINGERPRINT_WINDOW_SECONDS: f64 = 120.0;
 
 /// A prepared (decoded + envelope-analyzed) timeline event.
-struct PreparedEvent {
-    event: EventDescriptor,
+#[derive(Clone)]
+pub(crate) struct PreparedEvent {
+    pub(crate) event: EventDescriptor,
     /// Media time (seconds) that corresponds to buffer index 0.
-    span_start_media: f64,
+    pub(crate) span_start_media: f64,
     /// Analyzed duration in seconds.
-    span_len_seconds: f64,
+    pub(crate) span_len_seconds: f64,
     /// Retained PCM (only for short spans), at the internal sample rate.
-    samples: Option<Vec<f32>>,
+    pub(crate) samples: Option<Vec<f32>>,
     /// 125 Hz log-energy envelope (always available).
-    envelope: Vec<f32>,
+    pub(crate) envelope: Vec<f32>,
     /// True for generated/mock media where envelope similarity is meaningless.
-    is_synthetic: bool,
+    pub(crate) is_synthetic: bool,
 }
 
 impl PreparedEvent {
@@ -97,6 +98,8 @@ struct DraftInfo {
     ncc: f64,
     span_seconds: f64,
     timeline_start: f64,
+    // Timeline seconds from the source media start (already converted with the
+    // event's playback rate at construction).
     media_start: f64,
 }
 
@@ -119,19 +122,20 @@ const MIN_INDIVIDUAL_SPAN: f64 = 1.5;
 const OUTLIER_TOLERANCE: f64 = 3.0;
 const SOURCE_SEGMENT_GAP_SECONDS: f64 = 60.0;
 
-struct PairAnalysis {
-    lag_seconds: f64,
-    confidence: f64,
-    drift_ppm: f64,
-    split_points_event_relative: Vec<f64>,
-    method: &'static str,
-    ncc_score: f64,
+pub(crate) struct PairAnalysis {
+    pub(crate) lag_seconds: f64,
+    pub(crate) confidence: f64,
+    pub(crate) drift_ppm: f64,
+    pub(crate) split_points: Vec<SplitPoint>,
+    pub(crate) method: &'static str,
+    pub(crate) ncc_score: f64,
 }
 
 struct EdgeOutcome {
     edge: Option<SyncEdge>,
     method: Option<String>,
     ncc_score: Option<f64>,
+    split_points: Vec<SplitPoint>,
     warning: Option<String>,
     cancelled: bool,
 }
@@ -142,6 +146,7 @@ impl EdgeOutcome {
             edge: None,
             method: None,
             ncc_score: None,
+            split_points: Vec::new(),
             warning: None,
             cancelled: true,
         }
@@ -182,6 +187,65 @@ pub fn run_sync_pipeline(
     let mut warnings: Vec<String> = Vec::new();
     let gcc = GccPhat::new();
 
+    // --- Global matching (Milestone B) ----------------------------------------------
+    // Enabled by default from the UI. It is skipped for DST/preserve-timeline mode,
+    // which must keep its rigid per-source behaviour. Any sparse/unusable input falls
+    // through to the untouched legacy pipeline below.
+    if request.options.global_matching && !request.options.preserve_timeline_order {
+        match crate::global_pipeline::run_global(request, &all_events, target_rate, reporter) {
+            Ok((Some(event_results), mut global_warnings)) => {
+                warnings.append(&mut global_warnings);
+                if let Some(track_id) = request.master_track_id.as_deref() {
+                    if !all_events.iter().any(|e| e.track_id == track_id) {
+                        warnings.push(format!(
+                            "Selected master track '{}' has no analyzable events (generators/missing media, or it was excluded by the selection scope). Falling back to Auto (recommended).",
+                            track_id
+                        ));
+                    }
+                }
+
+                // Global matching has no implicit master. Keep the user-pinned
+                // track if one was selected; otherwise leave it empty so the UI
+                // can report "Global matching" without a false master.
+                let master_track_id = request
+                    .master_track_id
+                    .clone()
+                    .filter(|track| all_events.iter().any(|e| &e.track_id == track))
+                    .unwrap_or_default();
+
+                let elapsed = start_time.elapsed().as_millis() as u64;
+                return Ok(SyncManifest {
+                    session_id: format!(
+                        "sync_{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs()
+                    ),
+                    success: true,
+                    master_track_id,
+                    events: event_results,
+                    warnings,
+                    processing_time_ms: elapsed,
+                });
+            }
+            Ok((None, mut global_warnings)) => {
+                // Keep the global diagnostics (for example untrusted clocks)
+                // even when the sparse/memory fallback runs.
+                warnings.append(&mut global_warnings);
+                warnings.push(
+                    "Global matching not applicable for this project; falling back to the legacy single-anchor pipeline."
+                        .to_string(),
+                );
+            }
+            Err(e) if e == CANCELLED => return Err(CANCELLED.into()),
+            Err(e) => warnings.push(format!(
+                "Global matching failed ({}); falling back to the legacy single-anchor pipeline.",
+                e
+            )),
+        }
+    }
+
     // --- Master reference selection -------------------------------------------------
     // Pick the event that covers the longest continuous media span. For wedding
     // projects this is normally the long audio recorder take, which gives every
@@ -189,7 +253,7 @@ pub fn run_sync_pipeline(
     if let Some(track_id) = request.master_track_id.as_deref() {
         if !all_events.iter().any(|e| e.track_id == track_id) {
             warnings.push(format!(
-                "Selected master track '{}' has no analyzable events (generators/missing media, or it was excluded by the selection scope). Falling back to Auto-Detect.",
+                "Selected master track '{}' has no analyzable events (generators/missing media, or it was excluded by the selection scope). Falling back to Auto (recommended).",
                 track_id
             ));
         }
@@ -268,6 +332,9 @@ pub fn run_sync_pipeline(
     let mut drafts: Vec<DraftInfo> = Vec::new();
     let mut methods: HashMap<String, String> = HashMap::new();
     let mut ncc_scores: HashMap<String, f64> = HashMap::new();
+    // Structured split points keyed by event id. The graph solver only carries the
+    // legacy timestamp array, so the step jumps are re-attached at manifest time.
+    let mut split_points_by_event: HashMap<String, Vec<SplitPoint>> = HashMap::new();
 
     let event_map: HashMap<String, &EventDescriptor> = all_events
         .iter()
@@ -291,6 +358,10 @@ pub fn run_sync_pipeline(
                 if let Some(ncc) = outcome.ncc_score {
                     ncc_scores.insert(edge.to_event_id.clone(), ncc);
                 }
+                if !outcome.split_points.is_empty() {
+                    split_points_by_event
+                        .insert(edge.to_event_id.clone(), outcome.split_points);
+                }
 
                 if let Some(ev) = event_map.get(&edge.to_event_id) {
                     drafts.push(DraftInfo {
@@ -298,7 +369,7 @@ pub fn run_sync_pipeline(
                         ncc: outcome.ncc_score.unwrap_or(0.0),
                         span_seconds: analysis_span(ev, false).1,
                         timeline_start: ev.timeline_start_seconds,
-                        media_start: ev.media_start_seconds,
+                        media_start: media_seconds_to_timeline(ev, ev.media_start_seconds),
                     });
                 }
             }
@@ -321,8 +392,11 @@ pub fn run_sync_pipeline(
         }
     }
 
-    // Master file T0 is the timeline timestamp corresponding to t=0 of the source media
-    let master_t0 = master_event.timeline_start_seconds - master_event.media_start_seconds;
+    // Master file T0 is the timeline timestamp corresponding to t=0 of the source
+    // media. A retimed master advances media faster than timeline, so scale the
+    // media offset back to timeline seconds.
+    let master_t0 = master_event.timeline_start_seconds
+        - media_seconds_to_timeline(master_event, master_event.media_start_seconds);
 
     // --- Phase 2: Multi-take & transitive relay pass --------------------------------
     // Events outside the single longest master take (e.g. a separate Reception take
@@ -357,7 +431,8 @@ pub fn run_sync_pipeline(
                 && !strong_draft_ids.contains(&ev.event_id)
                 && analysis_span(ev, true).1 >= MIN_ANCHOR_SPAN
             {
-                let t0 = ev.timeline_start_seconds - ev.media_start_seconds;
+                let t0 = ev.timeline_start_seconds
+                    - media_seconds_to_timeline(ev, ev.media_start_seconds);
                 anchor_t0_map.insert(ev.event_id.clone(), t0);
                 secondary_roots.push((ev.event_id.clone(), t0));
                 relay_anchors.push((ev, t0));
@@ -440,13 +515,17 @@ pub fn run_sync_pipeline(
                                 methods.insert(edge.to_event_id.clone(), method);
                             }
                             ncc_scores.insert(edge.to_event_id.clone(), ncc);
+                            if !outcome.split_points.is_empty() {
+                                split_points_by_event
+                                    .insert(edge.to_event_id.clone(), outcome.split_points);
+                            }
                             if let Some(ev) = event_map.get(&edge.to_event_id) {
                                 drafts.push(DraftInfo {
                                     edge,
                                     ncc,
                                     span_seconds: analysis_span(ev, false).1,
                                     timeline_start: ev.timeline_start_seconds,
-                                    media_start: ev.media_start_seconds,
+                                    media_start: media_seconds_to_timeline(ev, ev.media_start_seconds),
                                 });
                             }
                         }
@@ -482,7 +561,7 @@ pub fn run_sync_pipeline(
 
     if request.options.preserve_timeline_order {
         warnings.push(
-            "Ignore Camera Clock Jumps (DST) enabled: recorded timestamps were ignored for placement; each source was shifted by one rigid audio-derived delta, so camera clock jumps (including daylight-saving changes) cannot move, reorder, or misplace clips."
+            "Force audio-only placement (DST) enabled: recorded timestamps were ignored for placement; each source was shifted by one rigid audio-derived delta, so camera clock jumps (including daylight-saving changes) cannot move, reorder, or misplace clips."
                 .to_string(),
         );
     }
@@ -506,7 +585,8 @@ pub fn run_sync_pipeline(
             let resolved_event_start = if is_master {
                 ev.timeline_start_seconds
             } else if resolved.is_aligned {
-                resolved.resolved_start_seconds + ev.media_start_seconds
+                resolved.resolved_start_seconds
+                    + media_seconds_to_timeline(ev, ev.media_start_seconds)
             } else {
                 ev.timeline_start_seconds
             };
@@ -584,6 +664,10 @@ pub fn run_sync_pipeline(
                 drift_ppm: resolved.drift_ppm,
                 confidence: resolved.confidence,
                 split_points_seconds: resolved.split_points_seconds.clone(),
+                split_points: align_split_points(
+                    split_points_by_event.get(&ev.event_id).map(|v| v.as_slice()),
+                    &resolved.split_points_seconds,
+                ),
                 is_aligned: resolved.is_aligned,
                 notes,
             });
@@ -606,6 +690,28 @@ pub fn run_sync_pipeline(
         warnings,
         processing_time_ms: elapsed,
     })
+}
+
+/// Rebuilds the structured split points for one event from the timestamps the
+/// graph solver resolved, re-attaching the step jump recorded for the same
+/// (event-relative) timestamp. Falls back to a zero shift when the solver used
+/// another edge and no jump was recorded for that timestamp.
+fn align_split_points(recorded: Option<&[SplitPoint]>, timestamps: &[f64]) -> Vec<SplitPoint> {
+    let recorded = recorded.unwrap_or(&[]);
+    timestamps
+        .iter()
+        .map(|&timestamp_seconds| {
+            let step_jump_seconds = recorded
+                .iter()
+                .find(|sp| (sp.timestamp_seconds - timestamp_seconds).abs() <= 1e-3)
+                .map(|sp| sp.step_jump_seconds)
+                .unwrap_or(0.0);
+            SplitPoint {
+                timestamp_seconds,
+                step_jump_seconds,
+            }
+        })
+        .collect()
 }
 
 fn draft_resolved_start(
@@ -696,7 +802,7 @@ fn finalize_edges(
         if !preserve_order {
             if let Some(jump) = detect_clock_jump(&all_clusters) {
                 warnings.push(format!(
-                    "Source '{}': the recorded clock changes by about {:.0} s between clips (possible daylight-saving change). Enable 'Ignore Camera Clock Jumps (DST)' so placement does not depend on those timestamps.",
+                    "Source '{}': the recorded clock changes by about {:.0} s between clips (possible daylight-saving change). Enable 'Force audio-only placement (DST)' so placement does not depend on those timestamps.",
                     short_source_name(key),
                     jump
                 ));
@@ -929,7 +1035,8 @@ fn process_segment(
             handled.insert(ev.event_id.clone());
             if let Some(delta) = fallback_delta {
                 let target_start = ev.timeline_start_seconds + delta;
-                let offset = target_start - master_t0 - ev.media_start_seconds;
+                let offset = target_start - master_t0
+            - media_seconds_to_timeline(ev, ev.media_start_seconds);
                 out.push(SyncEdge {
                     from_event_id: master_event_id.to_string(),
                     to_event_id: ev.event_id.clone(),
@@ -1043,7 +1150,7 @@ fn process_segment(
         let predicted_absolute = match ev.recorded_time_seconds {
             Some(rec) => {
                 if let Some(clock) = segment_clock {
-                    Some((rec - clock) + ev.media_start_seconds)
+                    Some((rec - clock) + media_seconds_to_timeline(ev, ev.media_start_seconds))
                 } else if !timed_anchors.is_empty() {
                     let mut best: Option<(f64, f64)> = None;
                     for a in &timed_anchors {
@@ -1053,11 +1160,13 @@ fn process_segment(
                             best = Some((distance, a.clock.unwrap_or(0.0)));
                         }
                     }
-                    best.map(|(_, clock)| (rec - clock) + ev.media_start_seconds)
-                } else if let Some(clock) = group_clock {
-                    Some((rec - clock) + ev.media_start_seconds)
+                    best.map(|(_, clock)| {
+                        (rec - clock) + media_seconds_to_timeline(ev, ev.media_start_seconds)
+                    })
                 } else {
-                    None
+                    group_clock.map(|clock| {
+                        (rec - clock) + media_seconds_to_timeline(ev, ev.media_start_seconds)
+                    })
                 }
             }
             None => None,
@@ -1116,7 +1225,8 @@ fn process_segment(
             absolute += 1;
         }
 
-        let offset = target_start - master_t0 - ev.media_start_seconds;
+        let offset = target_start - master_t0
+            - media_seconds_to_timeline(ev, ev.media_start_seconds);
         out.push(SyncEdge {
             from_event_id: master_event_id.to_string(),
             to_event_id: ev.event_id.clone(),
@@ -1171,7 +1281,8 @@ fn process_untimed(
             handled.insert(ev.event_id.clone());
             if let Some(delta) = fallback_delta {
                 let target_start = ev.timeline_start_seconds + delta;
-                let offset = target_start - master_t0 - ev.media_start_seconds;
+                let offset = target_start - master_t0
+            - media_seconds_to_timeline(ev, ev.media_start_seconds);
                 out.push(SyncEdge {
                     from_event_id: master_event_id.to_string(),
                     to_event_id: ev.event_id.clone(),
@@ -1227,7 +1338,8 @@ fn process_untimed(
         };
 
         handled.insert(ev.event_id.clone());
-        let offset = target_start - master_t0 - ev.media_start_seconds;
+        let offset = target_start - master_t0
+            - media_seconds_to_timeline(ev, ev.media_start_seconds);
         out.push(SyncEdge {
             from_event_id: master_event_id.to_string(),
             to_event_id: ev.event_id.clone(),
@@ -1294,6 +1406,7 @@ fn analyze_event(
                 edge: None,
                 method: None,
                 ncc_score: None,
+                split_points: Vec::new(),
                 warning: Some(format!("Skipped '{}': {}", ev.event_id, e)),
                 cancelled: false,
             }
@@ -1302,9 +1415,17 @@ fn analyze_event(
 
     match analyze_pair(master, &slave, request, target_rate, gcc) {
         Ok(pair) => {
-            // Buffer-space lag -> media-space T0 offset.
-            let bias = master.span_start_media - slave.span_start_media;
-            let offset_seconds = pair.lag_seconds + bias;
+            // Buffer-space lag -> media-space T0 offset. Convert each side's media
+            // position with its own playback rate so a retimed master or slave does
+            // not distort the timeline delta.
+            let bias = master.span_start_media / playback_rate_or_one(&master.event)
+                - slave.span_start_media / playback_rate_or_one(ev);
+            let offset_seconds = pair.lag_seconds / playback_rate_or_one(ev) + bias;
+            let split_points_seconds = pair
+                .split_points
+                .iter()
+                .map(|sp| sp.timestamp_seconds)
+                .collect();
 
             EdgeOutcome {
                 edge: Some(SyncEdge {
@@ -1313,10 +1434,11 @@ fn analyze_event(
                     offset_seconds,
                     drift_ppm: pair.drift_ppm,
                     confidence: pair.confidence,
-                    split_points_seconds: pair.split_points_event_relative,
+                    split_points_seconds,
                 }),
                 method: Some(pair.method.to_string()),
                 ncc_score: Some(if slave.is_synthetic { 1.0 } else { pair.ncc_score }),
+                split_points: pair.split_points,
                 warning: None,
                 cancelled: false,
             }
@@ -1325,13 +1447,14 @@ fn analyze_event(
             edge: None,
             method: None,
             ncc_score: None,
+            split_points: Vec::new(),
             warning: Some(format!("Skipped '{}': {}", ev.event_id, e)),
             cancelled: false,
         },
     }
 }
 
-fn analyze_pair(
+pub(crate) fn analyze_pair(
     master: &PreparedEvent,
     slave: &PreparedEvent,
     request: &SyncTaskRequest,
@@ -1463,7 +1586,7 @@ fn analyze_pair(
     }
 
     // 7. Drift + discontinuity analysis over the bounded window pair.
-    let (drift_ppm, split_points_event_relative) = analyze_drift(
+    let (drift_ppm, split_points) = analyze_drift(
         master_window,
         slave_window,
         v0.max(0) as f64 / rate,
@@ -1478,7 +1601,7 @@ fn analyze_pair(
         lag_seconds: lag_samples / rate,
         confidence,
         drift_ppm,
-        split_points_event_relative,
+        split_points,
         method,
         ncc_score,
     })
@@ -1530,7 +1653,7 @@ fn correlate_direct(
         lag_seconds: lag_samples / rate,
         confidence: peak.confidence,
         drift_ppm,
-        split_points_event_relative: split_points,
+        split_points,
         method,
         ncc_score,
     })
@@ -1551,8 +1674,10 @@ fn analyze_drift(
     request: &SyncTaskRequest,
     target_rate: u32,
     gcc: &GccPhat,
-) -> (f64, Vec<f64>) {
-    if !request.options.detect_drift {
+) -> (f64, Vec<SplitPoint>) {
+    // Discontinuity-only runs still need the observation loop; only the drift
+    // regression is gated on `detect_drift`.
+    if !request.options.detect_drift && !request.options.detect_discontinuities {
         return (0.0, Vec::new());
     }
 
@@ -1609,7 +1734,9 @@ fn analyze_drift(
     let mut split_obs = observations.clone();
     if observations.len() >= 5 {
         if let Some(ransac) = RansacRegression::fit(&observations, 150, residual_threshold, 0.5) {
-            if ransac.r_squared >= 0.5 {
+            // Only stretch the timeline when drift correction is enabled. The fit
+            // still contributes its inlier set to de-noise discontinuity detection.
+            if request.options.detect_drift && ransac.r_squared >= 0.5 {
                 let limit = request.options.max_drift_ppm.abs().clamp(1.0, 100_000.0);
                 drift_ppm = ransac.drift_ppm.clamp(-limit, limit);
             }
@@ -1626,19 +1753,22 @@ fn analyze_drift(
 
     let mut split_points = Vec::new();
     if request.options.detect_discontinuities {
+        // Split times are measured in decoded media seconds; convert to timeline
+        // seconds using the event's existing playback rate before placing them.
+        let slave_rate = playback_rate_or_one(&slave_event.event);
         for d in DiscontinuityDetector::detect_step_jumps(&split_obs, residual_threshold) {
-            split_points.push(
-                slave_event.event.timeline_start_seconds
-                    + buffer_to_event
-                    + d.timestamp_seconds,
-            );
+            split_points.push(SplitPoint {
+                timestamp_seconds: slave_event.event.timeline_start_seconds
+                    + (buffer_to_event + d.timestamp_seconds) / slave_rate,
+                step_jump_seconds: d.step_jump_seconds / slave_rate,
+            });
         }
     }
 
     (drift_ppm, split_points)
 }
 
-fn prepare_event(
+pub(crate) fn prepare_event(
     ev: &EventDescriptor,
     is_master: bool,
     request: &SyncTaskRequest,
@@ -1694,15 +1824,18 @@ fn prepare_event(
             return Err("decoded audio buffer was empty".into());
         }
 
-        if request.options.voice_activity_filter {
-            crate::audio::DspProcessor::apply_voice_activity_filter(&mut samples, 512, -40.0);
-        }
-
+        // Build the envelope from the ungated samples so short and long takes use
+        // identical envelope conditioning; VAD is applied afterwards and only
+        // affects the GCC-PHAT waveform correlation.
         let envelope = CoarseAligner::compute_energy_envelope(
             &samples,
             ENVELOPE_FRAME_SIZE,
             ENVELOPE_HOP_SIZE,
         );
+
+        if request.options.voice_activity_filter {
+            crate::audio::DspProcessor::apply_voice_activity_filter(&mut samples, 512, -40.0);
+        }
 
         return Ok(PreparedEvent {
             event: ev.clone(),
@@ -1742,25 +1875,46 @@ fn prepare_event(
 /// The master reference analyzes the whole available take so that camera clips
 /// anywhere inside a long recorder file can be located. Slaves only analyze the
 /// portion that is actually on the timeline.
-fn analysis_span(ev: &EventDescriptor, is_master: bool) -> (f64, f64) {
+pub(crate) fn analysis_span(ev: &EventDescriptor, is_master: bool) -> (f64, f64) {
+    let rate = playback_rate_or_one(ev);
     let start = ev.media_start_seconds.max(0.0);
+
+    // `timeline_length_seconds` is in timeline seconds; decoding, envelopes and
+    // correlations all work in source-media seconds, so scale by the playback
+    // rate (media span = timeline span * rate).
+    let timeline_span_media = ev.timeline_length_seconds * rate;
 
     let available = if ev.media_length_seconds > 0.5 {
         ev.media_length_seconds
     } else {
-        ev.timeline_length_seconds
+        timeline_span_media
     };
 
     let len = if is_master {
         available
     } else {
-        ev.timeline_length_seconds.max(0.5).min(available.max(0.5))
+        timeline_span_media.max(0.5).min(available.max(0.5))
     };
 
     (start, len.clamp(0.5, MAX_ANALYSIS_SECONDS))
 }
 
-fn master_span_score(ev: &EventDescriptor) -> f64 {
+/// VEGAS playback rate with defensive normalization (non-finite/<=0 -> 1.0).
+pub(crate) fn playback_rate_or_one(ev: &EventDescriptor) -> f64 {
+    let rate = ev.playback_rate;
+    if rate.is_finite() && rate > 0.0 {
+        rate
+    } else {
+        1.0
+    }
+}
+
+/// Converts a source-media duration into timeline seconds at the event's rate.
+fn media_seconds_to_timeline(ev: &EventDescriptor, seconds: f64) -> f64 {
+    seconds / playback_rate_or_one(ev)
+}
+
+pub(crate) fn master_span_score(ev: &EventDescriptor) -> f64 {
     if ev.media_length_seconds > 0.5 {
         ev.media_length_seconds
     } else {
@@ -1768,7 +1922,7 @@ fn master_span_score(ev: &EventDescriptor) -> f64 {
     }
 }
 
-fn choose_master<'a>(
+pub(crate) fn choose_master<'a>(
     request: &SyncTaskRequest,
     all_events: &'a [EventDescriptor],
 ) -> &'a EventDescriptor {
@@ -1816,7 +1970,7 @@ fn choose_master<'a>(
         .unwrap_or(&all_events[0])
 }
 
-fn normalize_path(path: &str) -> String {
+pub(crate) fn normalize_path(path: &str) -> String {
     path.trim_matches('"').replace('/', "\\")
 }
 
@@ -1883,6 +2037,7 @@ mod tests {
             is_muted: false,
             source_key: None,
             recorded_time_seconds: None,
+            ..EventDescriptor::default()
         }
     }
 

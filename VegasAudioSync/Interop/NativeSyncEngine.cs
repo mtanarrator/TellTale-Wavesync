@@ -14,7 +14,7 @@ namespace VegasAudioSync.Interop
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         public delegate int NativeProgressCallback(float progress, IntPtr messagePtr, IntPtr userData);
 
-        [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true, EntryPoint = "LoadLibraryW")]
         private static extern IntPtr LoadLibrary(string libname);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
@@ -33,6 +33,19 @@ namespace VegasAudioSync.Interop
         private static bool _libraryPreloaded = false;
         private static readonly object _preloadLock = new object();
 
+        // Detailed reason from the last failed preload (null after a successful load).
+        // Written only under _preloadLock; a single immutable string keeps reads atomic.
+        private static string _lastLoadFailure;
+
+        /// <summary>
+        /// Diagnostic for the last failed attempt to preload the native library, or null
+        /// when the most recent attempt succeeded (or none has run yet).
+        /// </summary>
+        public static string LastLoadDiagnostics
+        {
+            get { return _lastLoadFailure; }
+        }
+
         public static void EnsureLibraryLoaded()
         {
             if (_libraryPreloaded) return;
@@ -41,19 +54,51 @@ namespace VegasAudioSync.Interop
             {
                 if (_libraryPreloaded) return;
 
-                // Determine base directory of this assembly
-                string assemblyPath = Assembly.GetExecutingAssembly().Location;
-                string assemblyDir = Path.GetDirectoryName(assemblyPath);
-
-                if (!string.IsNullOrEmpty(assemblyDir))
+                // Determine base directory of this assembly. Never throw from here:
+                // failure is recorded and the next call may retry.
+                string targetDllPath = null;
+                try
                 {
-                    string targetDllPath = Path.Combine(assemblyDir, DllName);
-                    if (File.Exists(targetDllPath))
+                    string assemblyPath = Assembly.GetExecutingAssembly().Location;
+                    string assemblyDir = Path.GetDirectoryName(assemblyPath);
+
+                    if (string.IsNullOrEmpty(assemblyDir))
                     {
-                        LoadLibrary(targetDllPath);
+                        _lastLoadFailure = "Win32 0 for '<assembly directory unavailable>'";
+                        return;
+                    }
+
+                    targetDllPath = Path.Combine(assemblyDir, DllName);
+
+                    if (!File.Exists(targetDllPath))
+                    {
+                        _lastLoadFailure = string.Format("Win32 {0} for '{1}'", 2, targetDllPath);
+                        return;
+                    }
+
+                    IntPtr handle = LoadLibrary(targetDllPath);
+                    if (handle == IntPtr.Zero)
+                    {
+                        int errorCode = Marshal.GetLastWin32Error();
+                        _lastLoadFailure = string.Format("Win32 {0} for '{1}'", errorCode, targetDllPath);
+                        return;
                     }
                 }
+                catch (Exception ex)
+                {
+                    int errorCode = Marshal.GetLastWin32Error();
+                    if (errorCode == 0) errorCode = -1;
+                    string path = targetDllPath ?? DllName;
+                    _lastLoadFailure = string.Format(
+                        "Win32 {0} for '{1}' ({2}: {3})",
+                        errorCode,
+                        path,
+                        ex.GetType().Name,
+                        ex.Message);
+                    return;
+                }
 
+                _lastLoadFailure = null;
                 _libraryPreloaded = true;
             }
         }
@@ -73,6 +118,12 @@ namespace VegasAudioSync.Interop
         public string GetEngineVersion()
         {
             EnsureLibraryLoaded();
+
+            string loadFailure = LastLoadDiagnostics;
+            if (loadFailure != null)
+            {
+                return "Unknown (LoadLibrary failed: " + loadFailure + ")";
+            }
 
             IntPtr versionPtr = vegas_sync_version();
             if (versionPtr == IntPtr.Zero)
@@ -113,19 +164,28 @@ namespace VegasAudioSync.Interop
                 {
                     callback = (progress, msgPtr, userData) =>
                     {
-                        // Non-zero return asks the native engine to stop at the next checkpoint.
-                        if (shouldCancel != null && shouldCancel())
+                        // An exception must never propagate back into native code.
+                        // Request cancellation (non-zero) instead.
+                        try
+                        {
+                            // Non-zero return asks the native engine to stop at the next checkpoint.
+                            if (shouldCancel != null && shouldCancel())
+                            {
+                                return 1;
+                            }
+
+                            if (onProgress != null)
+                            {
+                                string message = Utf8PtrToString(msgPtr);
+                                onProgress(progress, message);
+                            }
+
+                            return 0;
+                        }
+                        catch
                         {
                             return 1;
                         }
-
-                        if (onProgress != null)
-                        {
-                            string message = Utf8PtrToString(msgPtr);
-                            onProgress(progress, message);
-                        }
-
-                        return 0;
                     };
                 }
 

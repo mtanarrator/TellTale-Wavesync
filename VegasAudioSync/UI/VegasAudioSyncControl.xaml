@@ -168,10 +168,7 @@
     <Grid Margin="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/> <!-- Header / Brand Hero -->
-            <RowDefinition Height="Auto"/> <!-- Waveform Graphic Banner -->
-            <RowDefinition Height="Auto"/> <!-- Options Cards -->
-            <RowDefinition Height="Auto"/> <!-- Master Track Selector -->
-            <RowDefinition Height="*"/>    <!-- Terminal / HUD Output -->
+            <RowDefinition Height="*"/>    <!-- Scrollable body: setup, master, summary, log -->
             <RowDefinition Height="Auto"/> <!-- Status & Progress Bar -->
             <RowDefinition Height="Auto"/> <!-- Action Controls -->
         </Grid.RowDefinitions>
@@ -205,180 +202,299 @@
             </StackPanel>
         </Grid>
 
-        <!-- 2. Stylized Dual-Channel Audio Waveform Visualizer Banner -->
-        <Border Grid.Row="1" Height="28" Background="#12141C" BorderBrush="#202434" BorderThickness="1" CornerRadius="6" Margin="0,0,0,10" ClipToBounds="True">
-            <Canvas>
-                <!-- Subtle Grid lines -->
-                <Line X1="0" Y1="14" X2="420" Y2="14" Stroke="#1E2232" StrokeThickness="1" StrokeDashArray="2,4"/>
-                
-                <!-- Master Wave (Cyan) -->
-                <Path Data="M 0,14 Q 20,4 40,14 T 80,14 T 120,6 T 160,22 T 200,14 T 240,8 T 280,20 T 320,14 T 360,10 T 400,14" 
-                      Stroke="#00E5FF" StrokeThickness="1.4" Opacity="0.75"/>
-                
-                <!-- Secondary Synchronized Wave (Electric Blue) -->
-                <Path Data="M 0,14 Q 25,6 50,14 T 100,14 T 140,8 T 180,20 T 220,14 T 260,10 T 300,18 T 340,14 T 380,12 T 420,14" 
-                      Stroke="#0072FF" StrokeThickness="1.2" Opacity="0.60"/>
-
-                <!-- Phase Lock Crosshairs -->
-                <Rectangle Canvas.Left="198" Canvas.Top="4" Width="4" Height="20" Fill="#00F5A0" Opacity="0.4" RadiusX="2" RadiusY="2"/>
-            </Canvas>
-        </Border>
-
-        <!-- 3. Engine Options Card -->
-        <Border Grid.Row="2" Background="{StaticResource SurfaceCard}" BorderBrush="{StaticResource SurfaceCardBorder}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,10">
+        <!-- 2. Scrollable Body -->
+        <ScrollViewer x:Name="PageScroller" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                      Padding="0,0,2,0" Margin="0,0,0,4">
             <StackPanel>
-                <TextBlock Text="ENGINE PRECISION &amp; COMPENSATION" FontSize="9.5" FontWeight="Bold" Foreground="#6C758D" Margin="0,0,0,6"/>
-                
-                <CheckBox x:Name="ChkDetectDrift" Style="{StaticResource ModernToggleSwitch}" IsChecked="False">
+
+                <!-- 2a. Sync Setup Card -->
+                <Border Background="{StaticResource SurfaceCard}" BorderBrush="{StaticResource SurfaceCardBorder}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,10">
                     <StackPanel>
-                        <TextBlock Text="Clock Drift Correction" FontWeight="SemiBold" Foreground="#E2E4E9"/>
-                        <TextBlock Text="RANSAC linear regression &amp; dynamic PPM audio resampling" FontSize="10" Foreground="#8B92A5"/>
+                        <TextBlock Text="SYNC SETUP" FontSize="11" FontWeight="Bold" Foreground="#A7AEC2"/>
+
+                        <!-- Quick Setup Presets -->
+                        <TextBlock Text="QUICK SETUP" FontSize="11" FontWeight="Bold" Foreground="#A7AEC2" Margin="0,10,0,6"/>
+                        <UniformGrid Columns="2" Margin="0,0,0,12">
+                            <Button x:Name="BtnPresetMulticam" Content="Multicam" Height="28" FontSize="11" Margin="0,0,3,4"
+                                    Style="{StaticResource ModernSecondaryButton}" Click="PresetMulticam_Click"
+                                    ToolTip="Cameras plus scratch audio: sync video clips and keep overlaps on separate tracks."/>
+                            <Button x:Name="BtnPresetLongRecording" Content="Long recording" Height="28" FontSize="11" Margin="3,0,0,4"
+                                    Style="{StaticResource ModernSecondaryButton}" Click="PresetLongRecording_Click"
+                                    ToolTip="Long takes whose clocks drift: adds drift correction and maximum precision, so syncing takes longer."/>
+                            <Button x:Name="BtnPresetDamaged" Content="Damaged footage" Height="28" FontSize="11" Margin="0,0,3,0"
+                                    Style="{StaticResource ModernSecondaryButton}" Click="PresetDamaged_Click"
+                                    ToolTip="Phone or screen captures with dropped frames: repairs VFR gaps and uses maximum precision."/>
+                            <Button x:Name="BtnResetRecommended" Content="Reset defaults" Height="28" FontSize="11" Margin="3,0,0,0"
+                                    Style="{StaticResource ModernSecondaryButton}" Click="ResetRecommended_Click"
+                                    ToolTip="Back to the recommended settings: video syncing, lane splitting and global matching on, everything else off."/>
+                        </UniformGrid>
+
+                        <!-- Organize by Device -->
+                        <Button x:Name="BtnOrganizeDevices" Content="Organize Tracks by Device…" Height="30" FontSize="11"
+                                HorizontalAlignment="Stretch" Margin="0,0,0,12"
+                                Style="{StaticResource ModernSecondaryButton}" Click="BtnOrganizeDevices_Click"
+                                ToolTip="Scan timeline media, group clips by recording device, and build one video track per camera or one audio track per recorder. Nothing changes until you confirm the preview."/>
+
+                        <!-- What to sync -->
+                        <TextBlock Text="WHAT TO SYNC" FontSize="11" FontWeight="Bold" Foreground="#A7AEC2" Margin="0,0,0,4"/>
+
+                        <CheckBox x:Name="ChkIncludeVideo" Style="{StaticResource ModernToggleSwitch}" IsChecked="True"
+                                  ToolTip="Use for multicam shoots where each camera recorded scratch audio; slower than audio-only syncing but aligns the video clips too.">
+                            <StackPanel>
+                                <TextBlock Text="Include video clips" FontSize="12" Foreground="#E7E9EF"/>
+                                <TextBlock Text="Aligns camera clips using their embedded scratch audio" FontSize="11" Foreground="#A0A8BC" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <CheckBox x:Name="ChkSelectedOnly" Style="{StaticResource ModernToggleSwitch}" IsChecked="False"
+                                  ToolTip="Use when only a few takes are out of sync; anything outside the timeline selection is left untouched, so the rest of the project keeps its current offsets.">
+                            <StackPanel>
+                                <TextBlock Text="Selected clips only" FontSize="12" Foreground="#E7E9EF"/>
+                                <TextBlock Text="Unchecked: sync the whole project" FontSize="11" Foreground="#A0A8BC" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <!-- Handle problems -->
+                        <TextBlock Text="HANDLE PROBLEMS" FontSize="11" FontWeight="Bold" Foreground="#A7AEC2" Margin="0,10,0,4"/>
+
+                        <CheckBox x:Name="ChkDetectDrift" Style="{StaticResource ModernToggleSwitch}" IsChecked="False"
+                                  ToolTip="Use for long takes from recorders whose clocks run at slightly different speeds; fits a RANSAC drift line and resamples by the measured PPM offset, which adds analysis time.">
+                            <StackPanel>
+                                <TextBlock Text="Fix gradual sync drift" FontSize="12" Foreground="#E7E9EF"/>
+                                <TextBlock Text="For recorders whose clocks run at slightly different speeds" FontSize="11" Foreground="#A0A8BC" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <CheckBox x:Name="ChkDiscontinuity" Style="{StaticResource ModernToggleSwitch}" IsChecked="False"
+                                  ToolTip="Use for phone or screen recordings with variable frame rate; splits events at detected gaps so sync holds, at the cost of extra cuts and more timeline events.">
+                            <StackPanel>
+                                <TextBlock Text="Repair dropped frames" FontSize="12" Foreground="#E7E9EF"/>
+                                <TextBlock Text="Splits and re-aligns footage with VFR gaps" FontSize="11" Foreground="#A0A8BC" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <CheckBox x:Name="ChkPreserveOrder" Style="{StaticResource ModernToggleSwitch}" IsChecked="False"
+                                  ToolTip="Use for footage recorded across a daylight-saving change; placement comes from audio correlation instead of camera timestamps, so drift correction, dropped-frame repair and lane splitting are unavailable while it is on.">
+                            <StackPanel>
+                                <TextBlock Text="Force audio-only placement (DST)" FontSize="12" Foreground="#E7E9EF"/>
+                                <TextBlock Text="Ignores camera timestamps that jump an hour" FontSize="11" Foreground="#A0A8BC" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <TextBlock x:Name="TxtPreserveHint"
+                                   Text="DST mode is ON. Drift correction, dropped-frame repair, and lane splitting are locked. Click a locked option to review the trade-off."
+                                   FontSize="11" Foreground="#E0A34A" TextWrapping="Wrap" Margin="0,5,0,0" Visibility="Collapsed"/>
+
+                        <!-- Result layout -->
+                        <TextBlock Text="RESULT LAYOUT" FontSize="11" FontWeight="Bold" Foreground="#A7AEC2" Margin="0,10,0,4"/>
+
+                        <CheckBox x:Name="ChkPreventCrossfades" Style="{StaticResource ModernToggleSwitch}" IsChecked="True"
+                                  ToolTip="Recommended for multicam; overlapping synced clips land on extra sync lanes instead of crossfading, which means a taller track stack in the timeline.">
+                            <StackPanel>
+                                <TextBlock Text="Keep overlapping clips on separate tracks" FontSize="12" Foreground="#E7E9EF"/>
+                                <TextBlock Text="Adds Sync Lanes instead of crossfading" FontSize="11" Foreground="#A0A8BC" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </CheckBox>
+
+                        <!-- Advanced -->
+                        <Expander x:Name="ExpAdvanced" IsExpanded="False" Margin="0,12,0,0" Foreground="#E7E9EF">
+                            <Expander.Resources>
+                                <!-- Dark header: the default Expander chrome is light-themed. -->
+                                <Style TargetType="ToggleButton">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="ToggleButton">
+                                                <Border Background="Transparent" Padding="0,2">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <Path x:Name="Arrow" Data="M 0 0 L 4 4 L 0 8" Stroke="#A7AEC2"
+                                                              StrokeThickness="1.4" Margin="0,0,8,0"
+                                                              VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5"/>
+                                                        <ContentPresenter VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsChecked" Value="True">
+                                                        <Setter TargetName="Arrow" Property="RenderTransform">
+                                                            <Setter.Value>
+                                                                <RotateTransform Angle="90"/>
+                                                            </Setter.Value>
+                                                        </Setter>
+                                                    </Trigger>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="Arrow" Property="Stroke" Value="#00E5FF"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsKeyboardFocused" Value="True">
+                                                        <Setter TargetName="Arrow" Property="Stroke" Value="#00E5FF"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </Expander.Resources>
+                            <Expander.Header>
+                                <TextBlock Text="ADVANCED" FontSize="11" FontWeight="Bold" Foreground="#A7AEC2"/>
+                            </Expander.Header>
+                            <StackPanel Margin="0,6,0,0">
+                                <CheckBox x:Name="ChkSubSample" Style="{StaticResource ModernToggleSwitch}" IsChecked="False"
+                                          ToolTip="Adds parabolic peak interpolation for fractional-sample offsets; noticeably slower on long sessions and rarely changes the audible result.">
+                                    <StackPanel>
+                                        <TextBlock Text="Maximum precision (slower)" FontSize="12" Foreground="#E7E9EF"/>
+                                        <TextBlock Text="Fractional-sample alignment" FontSize="11" Foreground="#A0A8BC" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </CheckBox>
+
+                                <CheckBox x:Name="ChkVoiceActivity" Style="{StaticResource ModernToggleSwitch}" IsChecked="False"
+                                          ToolTip="Use for noisy rooms or constant hum; gates everything below roughly -40 dB before matching, which helps noisy takes but can hurt very quiet recordings.">
+                                    <StackPanel>
+                                        <TextBlock Text="Ignore background noise" FontSize="12" Foreground="#E7E9EF"/>
+                                        <TextBlock Text="Gates quiet room tone before matching" FontSize="11" Foreground="#A0A8BC" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </CheckBox>
+
+                                <CheckBox x:Name="ChkGlobalMatching" Style="{StaticResource ModernToggleSwitch}" IsChecked="True"
+                                          ToolTip="Matches all clips pairwise and solves them together instead of using one master anchor. Falls back automatically for very large or sparse projects.">
+                                    <StackPanel>
+                                        <TextBlock Text="Global matching (recommended)" FontSize="12" Foreground="#E7E9EF"/>
+                                        <TextBlock Text="Solves all clips together instead of one master anchor" FontSize="11" Foreground="#A0A8BC" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </CheckBox>
+
+                                <!-- Clock and ordering choices -->
+                                <TextBlock Text="TIME SOURCE" FontSize="11" FontWeight="Bold" Foreground="#A7AEC2" Margin="0,14,0,4"
+                                           ToolTip="Which clock the engine trusts for ordering and placing unsynced clips."/>
+                                <ComboBox x:Name="CmbTimeSource"
+                                          Height="30" VerticalContentAlignment="Center" HorizontalAlignment="Stretch"
+                                          Background="#12141D" Foreground="#000000" BorderBrush="#2F354A"
+                                          Cursor="Hand" ToolTip="Which clock the engine trusts for ordering and placing unsynced clips.">
+                                    <ComboBox.ItemContainerStyle>
+                                        <Style TargetType="ComboBoxItem">
+                                            <Setter Property="Foreground" Value="#000000"/>
+                                        </Style>
+                                    </ComboBox.ItemContainerStyle>
+                                    <ComboBoxItem Content="Auto (recommended)" Tag="auto" IsSelected="True" Foreground="#000000"/>
+                                    <ComboBoxItem Content="Recorded date" Tag="recorded" Foreground="#000000"/>
+                                    <ComboBoxItem Content="Timecode" Tag="timecode" Foreground="#000000"/>
+                                    <ComboBoxItem Content="Filename timestamp" Tag="filename" Foreground="#000000"/>
+                                    <ComboBoxItem Content="File modified time" Tag="file_time" Foreground="#000000"/>
+                                    <ComboBoxItem Content="Ignore" Tag="ignore" Foreground="#000000"/>
+                                </ComboBox>
+
+                                <TextBlock Text="CLIP ORDER" FontSize="11" FontWeight="Bold" Foreground="#A7AEC2" Margin="0,10,0,4"
+                                           ToolTip="How clips from the same device are ordered when audio alone cannot decide."/>
+                                <ComboBox x:Name="CmbClipOrder"
+                                          Height="30" VerticalContentAlignment="Center" HorizontalAlignment="Stretch"
+                                          Background="#12141D" Foreground="#000000" BorderBrush="#2F354A"
+                                          Cursor="Hand" ToolTip="How clips from the same device are ordered when audio alone cannot decide.">
+                                    <ComboBox.ItemContainerStyle>
+                                        <Style TargetType="ComboBoxItem">
+                                            <Setter Property="Foreground" Value="#000000"/>
+                                        </Style>
+                                    </ComboBox.ItemContainerStyle>
+                                    <ComboBoxItem Content="Auto (recommended)" Tag="auto" IsSelected="True" Foreground="#000000"/>
+                                    <ComboBoxItem Content="Strict file/recorded order" Tag="strict" Foreground="#000000"/>
+                                    <ComboBoxItem Content="Timecode order" Tag="timecode" Foreground="#000000"/>
+                                    <ComboBoxItem Content="Preserve timeline order" Tag="preserve" Foreground="#000000"/>
+                                    <ComboBoxItem Content="No ordering" Tag="none" Foreground="#000000"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </Expander>
                     </StackPanel>
-                </CheckBox>
+                </Border>
 
-                <Separator Background="#222634" Margin="0,3"/>
-
-                <CheckBox x:Name="ChkSubSample" Style="{StaticResource ModernToggleSwitch}" IsChecked="False">
+                <!-- 2b. Master Reference Track Selector -->
+                <Border Background="{StaticResource SurfaceCard}" BorderBrush="{StaticResource SurfaceCardBorder}" BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,10">
                     <StackPanel>
-                        <TextBlock Text="Sub-Sample Super-Resolution" FontWeight="SemiBold" Foreground="#E2E4E9"/>
-                        <TextBlock Text="Parabolic peak interpolation to fractional sample accuracy" FontSize="10" Foreground="#8B92A5"/>
+                        <TextBlock Text="MASTER ANCHOR" FontSize="11" FontWeight="Bold" Foreground="#A7AEC2" Margin="0,0,0,6"/>
+                        <ComboBox x:Name="CmbMasterTrack"
+                                  Height="30" VerticalContentAlignment="Center" HorizontalAlignment="Stretch"
+                                  Background="#12141D" Foreground="#000000" BorderBrush="#2F354A"
+                                  Cursor="Hand" ToolTip="Choose the recorder or camera track you trust as the reference, or use Auto (recommended), which picks the longest continuous take. The engine uses the longest take on the selected track.">
+                            <ComboBox.ItemContainerStyle>
+                                <Style TargetType="ComboBoxItem">
+                                    <Setter Property="Foreground" Value="#000000"/>
+                                </Style>
+                            </ComboBox.ItemContainerStyle>
+                            <ComboBoxItem Content="Auto (recommended)" IsSelected="True" Foreground="#000000"/>
+                        </ComboBox>
+                        <TextBlock Text="Auto, or pick any audio/video track" FontSize="11" Foreground="#A0A8BC" TextWrapping="Wrap" Margin="0,5,0,0"/>
                     </StackPanel>
-                </CheckBox>
+                </Border>
 
-                <Separator Background="#222634" Margin="0,3"/>
-
-                <CheckBox x:Name="ChkDiscontinuity" Style="{StaticResource ModernToggleSwitch}" IsChecked="False">
+                <!-- 2c. Result Summary Card -->
+                <Border x:Name="ResultSummaryCard" Visibility="Collapsed"
+                        Background="{StaticResource SurfaceCard}" BorderBrush="{StaticResource SurfaceCardBorder}" BorderThickness="1" CornerRadius="8" Padding="12,9" Margin="0,0,0,10">
                     <StackPanel>
-                        <TextBlock Text="Dropped-Frame Auto-Slicing" FontWeight="SemiBold" Foreground="#E2E4E9"/>
-                        <TextBlock Text="Splits timeline events at VFR camera drop discontinuities" FontSize="10" Foreground="#8B92A5"/>
+                        <TextBlock Text="RESULT" FontSize="11" FontWeight="Bold" Foreground="#A7AEC2" Margin="0,0,0,4"/>
+                        <TextBlock x:Name="TxtResultSummary" FontSize="11" Foreground="#A0A8BC" TextWrapping="Wrap"/>
                     </StackPanel>
-                </CheckBox>
+                </Border>
 
-                <Separator Background="#222634" Margin="0,3"/>
-
-                <CheckBox x:Name="ChkVoiceActivity" Style="{StaticResource ModernToggleSwitch}" IsChecked="False">
-                    <StackPanel>
-                        <TextBlock Text="Voice Activity Noise Gate" FontWeight="SemiBold" Foreground="#E2E4E9"/>
-                        <TextBlock Text="Attenuates quiet room ambience below -40 dB before matching" FontSize="10" Foreground="#8B92A5"/>
-                    </StackPanel>
-                </CheckBox>
-
-                <Separator Background="#222634" Margin="0,3"/>
-
-                <CheckBox x:Name="ChkSelectedOnly" Style="{StaticResource ModernToggleSwitch}" IsChecked="False">
-                    <StackPanel>
-                        <TextBlock Text="Scope: Selected Takes &amp; Tracks Only" FontWeight="SemiBold" Foreground="#E2E4E9"/>
-                        <TextBlock Text="Syncs only highlighted timeline events; uncheck to sync entire project" FontSize="10" Foreground="#8B92A5"/>
-                    </StackPanel>
-                </CheckBox>
-
-                <Separator Background="#222634" Margin="0,3"/>
-
-                <CheckBox x:Name="ChkIncludeVideo" Style="{StaticResource ModernToggleSwitch}" IsChecked="False">
-                    <StackPanel>
-                        <TextBlock Text="Include Video Clip Audio (Multicam)" FontWeight="SemiBold" Foreground="#E2E4E9"/>
-                        <TextBlock Text="Aligns camera clips using their embedded scratch audio" FontSize="10" Foreground="#8B92A5"/>
-                    </StackPanel>
-                </CheckBox>
-
-                <Separator Background="#222634" Margin="0,3"/>
-
-                <CheckBox x:Name="ChkPreventCrossfades" Style="{StaticResource ModernToggleSwitch}" IsChecked="False">
-                    <StackPanel>
-                        <TextBlock Text="Prevent Crossfades (Auto-Add Tracks)" FontWeight="SemiBold" Foreground="#E2E4E9"/>
-                        <TextBlock Text="Spreads overlapping synced events onto extra video/audio lanes" FontSize="10" Foreground="#8B92A5"/>
-                    </StackPanel>
-                </CheckBox>
-
-                <Separator Background="#222634" Margin="0,3"/>
-
-                <CheckBox x:Name="ChkPreserveOrder" Style="{StaticResource ModernToggleSwitch}" IsChecked="False"
-                          ToolTip="DST-proof mode: placement comes from audio correlation, not recorded timestamps, so a camera clock that jumps one hour forward or backward cannot move or reorder clips.">
-                    <StackPanel>
-                        <TextBlock Text="Ignore Camera Clock Jumps (DST)" FontWeight="SemiBold" Foreground="#E2E4E9"/>
-                        <TextBlock Text="Places clips from audio, not recorded timestamps; one rigid shift per source, no reordering, no added tracks" FontSize="10" Foreground="#8B92A5" TextWrapping="Wrap"/>
-                    </StackPanel>
-                </CheckBox>
-
-                <TextBlock x:Name="TxtPreserveHint"
-                           Text="Ignore Camera Clock Jumps (DST) is ON. Clock Drift Correction, Dropped-Frame Auto-Slicing, and Prevent Crossfades are locked because they cannot take effect in this mode. Click a locked option to override."
-                           FontSize="9.5" Foreground="#E0A34A" TextWrapping="Wrap" Margin="0,5,0,0" Visibility="Collapsed"/>
-            </StackPanel>
-        </Border>
-
-        <!-- 4. Master Reference Track Selector -->
-        <Border Grid.Row="3" Background="{StaticResource SurfaceCard}" BorderBrush="{StaticResource SurfaceCardBorder}" BorderThickness="1" CornerRadius="8" Padding="12,8" Margin="0,0,0,10">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,10,0">
-                    <TextBlock Text="Master Anchor:" FontWeight="SemiBold" Foreground="#E2E4E9"/>
-                    <TextBlock Text="Auto, or pick any audio/video track" FontSize="10" Foreground="#8B92A5"/>
-                </StackPanel>
-
-                <ComboBox x:Name="CmbMasterTrack" Grid.Column="1" 
-                          Height="30" VerticalContentAlignment="Center"
-                          Background="#12141D" Foreground="#000000" BorderBrush="#2F354A" 
-                          Cursor="Hand" ToolTip="Choose the recorder or camera track you trust as the reference, or use Auto-Detect (longest continuous take). The engine uses the longest take on the selected track.">
-                    <ComboBox.ItemContainerStyle>
-                        <Style TargetType="ComboBoxItem">
-                            <Setter Property="Foreground" Value="#000000"/>
-                        </Style>
-                    </ComboBox.ItemContainerStyle>
-                    <ComboBoxItem Content="Auto-Detect (Optimal Connectivity Anchor)" IsSelected="True" Foreground="#000000"/>
-                </ComboBox>
-            </Grid>
-        </Border>
-
-        <!-- 5. Results / Log Terminal HUD -->
-        <Border Grid.Row="4" Background="#0A0B10" BorderBrush="#222636" BorderThickness="1" CornerRadius="8" Padding="0" Margin="0,0,0,10">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
-                </Grid.RowDefinitions>
-
-                <!-- Terminal Header Bar -->
-                <Border Grid.Row="0" Background="#12141D" BorderBrush="#1C202E" BorderThickness="0,0,0,1" CornerRadius="8,8,0,0" Padding="10,6">
+                <!-- 2d. Activity Log -->
+                <Border Height="210" Background="#0A0B10" BorderBrush="#222636" BorderThickness="1" CornerRadius="8" Padding="0" Margin="0">
                     <Grid>
-                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                            <Ellipse Width="8" Height="8" Fill="#FF5F56" Margin="0,0,5,0"/>
-                            <Ellipse Width="8" Height="8" Fill="#FFBD2E" Margin="0,0,5,0"/>
-                            <Ellipse Width="8" Height="8" Fill="#27C93F" Margin="0,0,8,0"/>
-                            <TextBlock Text="ACTIVITY TERMINAL &amp; TIMELINE HUD" FontSize="9.5" FontWeight="Bold" Foreground="#6C758D"/>
-                        </StackPanel>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Log Header Bar -->
+                        <Border Grid.Row="0" Background="#12141D" BorderBrush="#1C202E" BorderThickness="0,0,0,1" CornerRadius="8,8,0,0" Padding="10,6">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Ellipse Width="8" Height="8" Fill="#FF5F56" Margin="0,0,5,0"/>
+                                    <Ellipse Width="8" Height="8" Fill="#FFBD2E" Margin="0,0,5,0"/>
+                                    <Ellipse Width="8" Height="8" Fill="#27C93F" Margin="0,0,8,0"/>
+                                    <TextBlock Text="ACTIVITY LOG" FontSize="11" FontWeight="Bold" Foreground="#A7AEC2" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <CheckBox x:Name="ChkLogWarningsOnly" Grid.Column="1" Content="Warnings only"
+                                          FontSize="11" Foreground="#9BA3B8" Cursor="Hand"
+                                          VerticalAlignment="Center" Margin="0,0,10,0"
+                                          Checked="ChkLogWarningsOnly_Checked" Unchecked="ChkLogWarningsOnly_Unchecked"
+                                          ToolTip="Show only warnings, errors and skipped-clip notes. The full log is kept and comes back when you uncheck this."/>
+                                <Button x:Name="BtnCopyLog" Grid.Column="2" Content="Copy Log" Height="24" Padding="8,2" FontSize="11"
+                                        VerticalAlignment="Center" ToolTip="Copy the visible log (the full history when the warnings filter is off)."
+                                        Style="{StaticResource ModernSecondaryButton}" Click="BtnCopyLog_Click"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- Monospace Log Stream -->
+                        <TextBox x:Name="TxtLog" Grid.Row="1" Text="Ready. Click 'Sync Timeline' to analyze and align multi-track audio."
+                                 PreviewMouseWheel="TxtLog_PreviewMouseWheel"
+                                 Foreground="#8892A8" Background="Transparent" BorderThickness="0" Padding="10,8"
+                                 TextWrapping="Wrap" FontFamily="Consolas" FontSize="11"
+                                 IsReadOnly="True" AcceptsReturn="True"
+                                 VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
                     </Grid>
                 </Border>
 
-                <!-- Monospace Log Stream -->
-                <ScrollViewer x:Name="LogScroller" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="10,8">
-                    <TextBlock x:Name="TxtLog" Text="Ready. Click 'Synchronize Timeline' to analyze and align multi-track audio." 
-                               Foreground="#8892A8" TextWrapping="Wrap" FontFamily="Consolas" FontSize="11" LineHeight="17"/>
-                </ScrollViewer>
-            </Grid>
-        </Border>
+            </StackPanel>
+        </ScrollViewer>
 
-        <!-- 6. Progress Section -->
-        <Border Grid.Row="5" Margin="0,0,0,10">
+        <!-- 3. Progress Section -->
+        <Border Grid.Row="2" Margin="0,0,0,8">
             <StackPanel>
                 <Grid Margin="0,0,0,4">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBlock x:Name="TxtStatus" Text="Ready" FontSize="11" FontWeight="Medium" Foreground="#9BA3B8"/>
+                    <TextBlock x:Name="TxtStatus" Text="Ready" FontSize="12" FontWeight="Medium" Foreground="#9BA3B8"/>
                 </Grid>
                 <Border Height="6" CornerRadius="3" Background="#161924" ClipToBounds="True">
-                    <ProgressBar x:Name="PrgSync" Height="6" Minimum="0" Maximum="100" Value="0" 
+                    <ProgressBar x:Name="PrgSync" Height="6" Minimum="0" Maximum="100" Value="0"
                                  Background="Transparent" Foreground="{StaticResource SyncActiveGradient}" BorderThickness="0"/>
                 </Border>
             </StackPanel>
         </Border>
 
-        <!-- 7. Action Button Controls -->
-        <Grid Grid.Row="6">
+        <!-- 4. Action Button Controls -->
+        <Grid Grid.Row="3">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="110"/>
                 <ColumnDefinition Width="8"/>
@@ -386,8 +502,8 @@
                 <ColumnDefinition Width="8"/>
                 <ColumnDefinition Width="92"/>
             </Grid.ColumnDefinitions>
-            <Button x:Name="BtnRefresh" Grid.Column="0" Content="↺ Refresh" Height="36" Style="{StaticResource ModernSecondaryButton}" Click="BtnRefresh_Click"/>
-            <Button x:Name="BtnSync" Grid.Column="2" Content="⚡ Synchronize Timeline" Height="36" Style="{StaticResource ModernHeroButton}" Click="BtnSync_Click"/>
+            <Button x:Name="BtnRefresh" Grid.Column="0" Content="↺ Rescan" Height="36" Style="{StaticResource ModernSecondaryButton}" Click="BtnRefresh_Click"/>
+            <Button x:Name="BtnSync" Grid.Column="2" Content="⚡ Sync Timeline" Height="36" Style="{StaticResource ModernHeroButton}" Click="BtnSync_Click"/>
             <Button x:Name="BtnCancel" Grid.Column="4" Content="■ Stop" Height="36" Style="{StaticResource ModernSecondaryButton}" Click="BtnCancel_Click" IsEnabled="False"/>
         </Grid>
     </Grid>

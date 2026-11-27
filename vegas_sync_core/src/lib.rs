@@ -1,12 +1,17 @@
 pub mod audio;
+pub mod clock;
 pub mod correlation;
 pub mod drift;
 pub mod engine;
 pub mod ffi;
 pub mod graph;
+pub mod global_pipeline;
+pub mod global_solver;
+pub mod logging;
 pub mod models;
 
 pub use audio::*;
+pub use clock::*;
 pub use correlation::*;
 pub use drift::*;
 pub use ffi::*;

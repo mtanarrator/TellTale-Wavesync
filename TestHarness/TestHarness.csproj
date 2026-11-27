@@ -12,9 +12,10 @@
     <ProjectReference Include="..\VegasAudioSync\VegasAudioSync.csproj" />
   </ItemGroup>
 
-  <!-- verify_group_behavior.cs is a standalone VEGAS script, not part of this console app. -->
+  <!-- VEGAS scripts are standalone, not part of this console app. -->
   <ItemGroup>
     <Compile Remove="verify_group_behavior.cs" />
+    <Compile Remove="verify_group_track_move.cs" />
   </ItemGroup>
 
   <ItemGroup>

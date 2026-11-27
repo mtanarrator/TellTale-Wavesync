@@ -104,6 +104,8 @@ fn make_event(
         is_muted: false,
         source_key: None,
         recorded_time_seconds: None,
+        playback_rate: 1.0,
+        ..EventDescriptor::default()
     }
 }
 
@@ -218,6 +220,7 @@ fn test_short_clips_inherit_source_group_shift() {
         ],
         groups: Vec::new(),
         options: SyncOptions {
+            global_matching: false,
             preserve_timeline_order: false,
             internal_sample_rate: SAMPLE_RATE,
             detect_drift: false,
@@ -228,6 +231,7 @@ fn test_short_clips_inherit_source_group_shift() {
             voice_activity_filter: false,
             discontinuity_threshold_ms: 50.0,
             ffmpeg_path: None,
+            ..SyncOptions::default()
         },
     };
 
@@ -372,6 +376,7 @@ fn test_recorded_timestamps_position_short_clips_absolutely() {
         ],
         groups: Vec::new(),
         options: SyncOptions {
+            global_matching: false,
             preserve_timeline_order: false,
             internal_sample_rate: SAMPLE_RATE,
             detect_drift: false,
@@ -382,6 +387,7 @@ fn test_recorded_timestamps_position_short_clips_absolutely() {
             voice_activity_filter: false,
             discontinuity_threshold_ms: 50.0,
             ffmpeg_path: None,
+            ..SyncOptions::default()
         },
     };
 
@@ -464,6 +470,7 @@ fn test_long_take_against_long_take_and_negative_position_shift() {
         ],
         groups: Vec::new(),
         options: SyncOptions {
+            global_matching: false,
             preserve_timeline_order: false,
             internal_sample_rate: SAMPLE_RATE,
             detect_drift: true,
@@ -474,6 +481,7 @@ fn test_long_take_against_long_take_and_negative_position_shift() {
             voice_activity_filter: false,
             discontinuity_threshold_ms: 50.0,
             ffmpeg_path: None,
+            ..SyncOptions::default()
         },
     };
 
@@ -578,6 +586,7 @@ fn test_short_camera_clips_align_inside_long_audio_take() {
         ],
         groups: Vec::new(),
         options: SyncOptions {
+            global_matching: false,
             preserve_timeline_order: false,
             internal_sample_rate: SAMPLE_RATE,
             detect_drift: false,
@@ -588,6 +597,7 @@ fn test_short_camera_clips_align_inside_long_audio_take() {
             voice_activity_filter: false,
             discontinuity_threshold_ms: 50.0,
             ffmpeg_path: None,
+            ..SyncOptions::default()
         },
     };
 
@@ -690,6 +700,7 @@ fn test_short_clips_only_folder_still_aligns_individually() {
         ],
         groups: Vec::new(),
         options: SyncOptions {
+            global_matching: false,
             preserve_timeline_order: false,
             internal_sample_rate: SAMPLE_RATE,
             detect_drift: false,
@@ -782,6 +793,7 @@ fn test_misclocked_cameras_in_same_folder_keep_strong_audio_sync() {
         ],
         groups: Vec::new(),
         options: SyncOptions {
+            global_matching: false,
             preserve_timeline_order: false,
             internal_sample_rate: SAMPLE_RATE,
             detect_drift: false,
@@ -865,6 +877,7 @@ fn test_multi_take_master_track_aligns_secondary_chapter() {
         ],
         groups: Vec::new(),
         options: SyncOptions {
+            global_matching: false,
             preserve_timeline_order: false,
             internal_sample_rate: SAMPLE_RATE,
             detect_drift: false,

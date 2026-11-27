@@ -70,11 +70,21 @@ namespace VegasAudioSync
 
         public override DockWindowStyle DefaultDockWindowStyle => DockWindowStyle.Docked;
 
-        public override Size DefaultFloatingSize => new Size(440, 680);
+        public override Size DefaultFloatingSize => new Size(460, 860);
 
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
+
+            try
+            {
+                // Keep the hosted WPF panel usable when the dock/floating window is small.
+                MinimumSize = new Size(420, 620);
+            }
+            catch
+            {
+                // Some host wrappers do not expose MinimumSize; sizing is best-effort.
+            }
 
             try
             {

@@ -51,11 +51,40 @@ impl DspProcessor {
         .map_err(|e| format!("Failed to create SincFixedIn resampler: {}", e))?;
 
         let waves_in = vec![samples.to_vec()];
-        let waves_out = resampler
-            .process(&waves_in, None)
-            .map_err(|e| format!("Resampling failed: {}", e))?;
+        let ratio = target_rate as f64 / source_rate as f64;
+        let expected_len = ((samples.len() as f64 * ratio).round() as usize).max(1);
+        let delay = resampler.output_delay();
 
-        Ok(waves_out.into_iter().next().unwrap_or_default())
+        let mut buffer: Vec<f32> = resampler
+            .process(&waves_in, None)
+            .map_err(|e| format!("Resampling failed: {}", e))?
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+
+        // `SincFixedIn` seeds its history so that output frame 0 already corresponds
+        // to input frame 0: the interpolator group delay is compensated internally
+        // (confirmed by the impulse test). Trimming `output_delay()` from the head
+        // would therefore shift audio ~1 ms early at 16 kHz. Instead we only use it
+        // to size the tail flush, and truncate to the exact expected duration.
+        let mut flushes = 0usize;
+        while buffer.len() < expected_len + delay && flushes < 8 {
+            let chunk = resampler
+                .process_partial::<Vec<f32>>(None, None)
+                .map_err(|e| format!("Resampling flush failed: {}", e))?
+                .into_iter()
+                .next()
+                .unwrap_or_default();
+            if chunk.is_empty() {
+                break;
+            }
+            buffer.extend_from_slice(&chunk);
+            flushes += 1;
+        }
+
+        let mut resampled: Vec<f32> = buffer;
+        resampled.truncate(expected_len);
+        Ok(resampled)
     }
 
     /// Generates a bandpass FIR filter kernel using the windowed sinc method (Hamming window).
@@ -322,6 +351,61 @@ mod tests {
             .map(|&s| s.abs())
             .fold(0.0f32, |a, b| a.max(b));
         assert!(max_amp <= 1.0001);
+    }
+
+    #[test]
+    fn test_resample_mono_delay_compensated_length() {
+        let source_rate = 48_000u32;
+        let target_rate = 16_000u32;
+        let input_len = 48_000usize;
+        let input: Vec<f32> = (0..input_len)
+            .map(|i| (2.0 * PI * 440.0 * i as f32 / source_rate as f32).sin())
+            .collect();
+
+        let output = DspProcessor::resample_mono(&input, source_rate, target_rate).unwrap();
+        let expected = input_len as f64 * target_rate as f64 / source_rate as f64;
+        assert!(
+            (output.len() as f64 - expected).abs() <= 4.0,
+            "expected ~{} samples, got {}",
+            expected,
+            output.len()
+        );
+    }
+
+    #[test]
+    fn test_resample_mono_impulse_alignment() {
+        let source_rate = 48_000u32;
+        let target_rate = 16_000u32;
+        let input_len = 48_000usize;
+        let impulse_index = input_len / 4;
+        let mut input = vec![0.0f32; input_len];
+        input[impulse_index] = 1.0;
+
+        let output = DspProcessor::resample_mono(&input, source_rate, target_rate).unwrap();
+        let (peak_index, peak) = output
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| {
+                a.abs()
+                    .partial_cmp(&b.abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .expect("non-empty output");
+        assert!(peak.abs() > 1e-3, "impulse energy lost: peak {}", peak);
+        let expected_index = impulse_index as f64 * target_rate as f64 / source_rate as f64;
+        let tolerance = target_rate as f64 / 1000.0;
+        assert!(
+            (peak_index as f64 - expected_index).abs() <= tolerance,
+            "impulse expected near {}, found at {}",
+            expected_index,
+            peak_index
+        );
+    }
+
+    #[test]
+    fn test_resample_mono_empty_input() {
+        let output = DspProcessor::resample_mono(&[], 48_000, 16_000).unwrap();
+        assert!(output.is_empty());
     }
 
     #[test]

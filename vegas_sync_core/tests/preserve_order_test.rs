@@ -98,6 +98,8 @@ fn make_event(
         is_muted: false,
         source_key: source_key.map(|s| s.to_string()),
         recorded_time_seconds: recorded_time,
+        playback_rate: 1.0,
+        ..EventDescriptor::default()
     }
 }
 
@@ -172,6 +174,7 @@ fn test_preserve_timeline_order_blocks_recorded_time_reordering() {
             tracks,
             groups: Vec::new(),
             options: SyncOptions {
+                global_matching: false,
                 detect_drift: false,
                 max_drift_ppm: 500.0,
                 discontinuity_threshold_ms: 50.0,
@@ -182,6 +185,7 @@ fn test_preserve_timeline_order_blocks_recorded_time_reordering() {
                 preserve_timeline_order: preserve,
                 internal_sample_rate: RATE,
                 ffmpeg_path: None,
+                ..SyncOptions::default()
             },
         }
     };

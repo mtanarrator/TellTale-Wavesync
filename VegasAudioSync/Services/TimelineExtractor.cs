@@ -21,7 +21,28 @@ namespace VegasAudioSync.Services
             bool selectedOnly = false,
             bool includeVideoEvents = true,
             Action<string> logCallback = null,
-            string masterTrackId = null)
+            string masterTrackId = null,
+            string ffprobePath = null)
+        {
+            try
+            {
+                return ExtractFromVegasCore(
+                    vegas, selectedOnly, includeVideoEvents, logCallback, masterTrackId, ffprobePath);
+            }
+            finally
+            {
+                // Probe results are only marked dirty during Lookup; persist once.
+                MediaMetadataCache.Flush();
+            }
+        }
+
+        private static SyncTaskRequest ExtractFromVegasCore(
+            Vegas vegas,
+            bool selectedOnly,
+            bool includeVideoEvents,
+            Action<string> logCallback,
+            string masterTrackId,
+            string ffprobePath)
         {
             if (vegas == null || vegas.Project == null)
                 throw new InvalidOperationException("No active VEGAS project loaded.");
@@ -119,6 +140,10 @@ namespace VegasAudioSync.Services
 
             int skippedWithoutMedia = 0;
             int skippedGroupCompanions = 0;
+            int timecodeFound = 0;
+            int filenameTimeFound = 0;
+            int fileTimeFound = 0;
+            int brollCount = 0;
             var addedGroupIds = new HashSet<string>(StringComparer.Ordinal);
 
             foreach (Track track in vegas.Project.Tracks)
@@ -235,18 +260,45 @@ namespace VegasAudioSync.Services
                     double takeOffsetSec = activeTake.Offset.ToMilliseconds() / 1000.0;
                     double mediaLengthSec = ResolveAvailableMediaSeconds(ev, activeTake);
 
-                    string sourceKey = null;
+                    string mediaFolder = null;
                     try
                     {
-                        sourceKey = Path.GetDirectoryName(resolvedPath);
-                        if (!string.IsNullOrEmpty(sourceKey))
+                        mediaFolder = Path.GetDirectoryName(resolvedPath);
+                    }
+                    catch
+                    {
+                        mediaFolder = null;
+                    }
+
+                    string sourceKey = DeviceIdentity.Key(resolvedPath, mediaFolder);
+
+                    MediaMetadata mediaMetadata = null;
+                    try
+                    {
+                        mediaMetadata = MediaMetadataCache.Lookup(resolvedPath, ffprobePath);
+                    }
+                    catch
+                    {
+                        mediaMetadata = null;
+                    }
+
+                    double? timecodeSeconds = mediaMetadata != null ? mediaMetadata.TimecodeSeconds : null;
+                    double? filenameTimeSeconds = mediaMetadata != null ? mediaMetadata.FilenameTimeSeconds : null;
+
+                    double? fileTimeSeconds = null;
+                    try
+                    {
+                        DateTime lastWriteUtc = new FileInfo(resolvedPath).LastWriteTimeUtc;
+                        fileTimeSeconds = (lastWriteUtc
+                            - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+                        if (double.IsNaN(fileTimeSeconds.Value) || double.IsInfinity(fileTimeSeconds.Value))
                         {
-                            sourceKey = sourceKey.TrimEnd('\\').ToLowerInvariant();
+                            fileTimeSeconds = null;
                         }
                     }
                     catch
                     {
-                        sourceKey = null;
+                        fileTimeSeconds = null;
                     }
 
                     double? recordedTime = null;
@@ -264,6 +316,30 @@ namespace VegasAudioSync.Services
                         recordedTime = null;
                     }
 
+                    // VEGAS sometimes reports no usable RecordedDateTime; fall back
+                    // to the container creation_time cached by MediaMetadataCache.
+                    if (!recordedTime.HasValue
+                        && mediaMetadata != null
+                        && mediaMetadata.CreationTimeSeconds.HasValue)
+                    {
+                        recordedTime = mediaMetadata.CreationTimeSeconds;
+                    }
+
+                    double playbackRate = 1.0;
+                    try
+                    {
+                        double currentRate = ev.PlaybackRate;
+                        if (!double.IsNaN(currentRate) && !double.IsInfinity(currentRate)
+                            && currentRate > 0.0001 && currentRate <= 100.0)
+                        {
+                            playbackRate = currentRate;
+                        }
+                    }
+                    catch
+                    {
+                        playbackRate = 1.0;
+                    }
+
                     var eventDesc = new EventDescriptor
                     {
                         EventId = syncId,
@@ -275,12 +351,24 @@ namespace VegasAudioSync.Services
                         TimelineLengthSeconds = lenSec,
                         MediaStartSeconds = takeOffsetSec,
                         MediaLengthSeconds = mediaLengthSec,
+                        PlaybackRate = playbackRate,
                         IsMuted = ev.Mute,
                         SourceKey = sourceKey,
-                        RecordedTimeSeconds = recordedTime
+                        RecordedTimeSeconds = recordedTime,
+                        TimecodeSeconds = timecodeSeconds,
+                        FilenameTimeSeconds = filenameTimeSeconds,
+                        FileTimeSeconds = fileTimeSeconds,
+                        // TODO(Milestone B): SyncOptions.BrollMaxSeconds will own this
+                        // threshold; keep the 15 s default for Milestone A.
+                        SyncRole = lenSec < 15.0 ? "broll" : "normal"
                     };
 
                     trackDesc.Events.Add(eventDesc);
+
+                    if (timecodeSeconds.HasValue) timecodeFound++;
+                    if (filenameTimeSeconds.HasValue) filenameTimeFound++;
+                    if (fileTimeSeconds.HasValue) fileTimeFound++;
+                    if (string.Equals(eventDesc.SyncRole, "broll", StringComparison.Ordinal)) brollCount++;
 
                     if (isGroupPrimary && !addedGroupIds.Contains(group.GroupId))
                     {
@@ -313,6 +401,13 @@ namespace VegasAudioSync.Services
             if (skippedGroupCompanions > 0)
             {
                 logCallback?.Invoke($"Skipped {skippedGroupCompanions} grouped companion event(s); only the primary reference per group was analyzed.");
+            }
+
+            if (timecodeFound > 0 || filenameTimeFound > 0 || fileTimeFound > 0 || brollCount > 0)
+            {
+                logCallback?.Invoke(
+                    $"Metadata: {timecodeFound} timecode, {filenameTimeFound} filename timestamp(s), " +
+                    $"{fileTimeFound} file time(s), {brollCount} b-roll clip(s).");
             }
 
             logCallback?.Invoke($"Extraction complete. {request.Tracks.Count} track(s), {request.Groups.Count} group(s) queued.");

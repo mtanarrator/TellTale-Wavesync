@@ -795,6 +795,7 @@ impl AudioDecoder {
             Ok(s) if s.success() => Ok(total),
             Ok(s) => {
                 if total > 0 {
+                    log_partial_decode(file_path, &s, total, duration_sec, target_rate);
                     Ok(total)
                 } else if stderr_text.is_empty() {
                     Err(format!("FFmpeg exited with status {}", s))
@@ -802,9 +803,67 @@ impl AudioDecoder {
                     Err(format!("FFmpeg exited with status {}: {}", s, stderr_text))
                 }
             }
-            Err(e) => Err(format!("Failed to wait for FFmpeg: {}", e)),
+            Err(e) => {
+                if total > 0 {
+                    log::warn!(
+                        "FFmpeg wait failed for '{}' after decoding {} sample(s) ({:.2}s): {}; keeping the partial buffer.",
+                        file_path,
+                        total,
+                        total as f64 / target_rate.max(1) as f64,
+                        e
+                    );
+                    Ok(total)
+                } else {
+                    Err(format!("Failed to wait for FFmpeg: {}", e))
+                }
+            }
         }
     }
+}
+
+/// Logs a partial FFmpeg decode (non-zero exit but usable audio) and flags
+/// output below 95% of the requested duration.
+fn log_partial_decode(
+    file_path: &str,
+    status: &std::process::ExitStatus,
+    total: u64,
+    duration_sec: Option<f64>,
+    target_rate: u32,
+) {
+    let decoded_seconds = total as f64 / target_rate.max(1) as f64;
+    if let Some(duration) = duration_sec {
+        if duration > 0.001 {
+            let expected = (duration * target_rate as f64).round().max(1.0);
+            let ratio = total as f64 / expected;
+            let shortfall_seconds = ((expected - total as f64).max(0.0)) / target_rate.max(1) as f64;
+            // Container duration can be approximate, so only call out a materially
+            // short decode rather than every rounding difference.
+            let flag = if ratio < 0.95 && shortfall_seconds > 0.5 {
+                " (< 95% of expected; more than 0.5s missing)"
+            } else {
+                ""
+            };
+            log::warn!(
+                "FFmpeg exited with status {} for '{}' after decoding {} sample(s), expected ~{} sample(s) ({:.1}s of {:.1}s){}; keeping the partial buffer.",
+                status,
+                file_path,
+                total,
+                expected as u64,
+                decoded_seconds,
+                duration,
+                flag
+            );
+            return;
+        }
+    }
+
+    log::warn!(
+        "FFmpeg exited with status {} for '{}' after decoding {} sample(s) ({:.1}s); keeping the partial buffer.",
+        status,
+        file_path,
+        total,
+        decoded_seconds
+    );
 }
 
 fn terminate(child: &mut Child) -> std::io::Result<()> {
