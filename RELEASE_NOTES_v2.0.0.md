@@ -45,6 +45,14 @@ A device clock that is more than **30 days** away from the project median is tre
 
 Container timecode is handled as seconds-of-day rather than a date, and is unwrapped across midnight so a run that crosses 23:59 does not jump backwards.
 
+### Camera audio is paired, not duplicated
+
+The organizer builds a **`CAM n — Name (V)`** track per camera and, when the camera already has companion audio events, a paired **`CAM n — Name (A)`** track. Existing audio is moved onto the paired track; nothing is copied, duplicated, or muted. A camera with no companion audio gets only its `(V)` track. Recorders still get one `REC n — Name` audio track per folder.
+
+### Metadata probing stays off the VEGAS UI thread
+
+Organizer and sync take a fast COM snapshot on VEGAS's UI thread, then collect ffprobe metadata in parallel on background workers. Scanning no longer blocks the panel, **Stop** remains available during the metadata pass, and the project-generation guard still discards results if the project changes. Crossfade protection now relocates overlapping grouped camera units as whole units to adjacent Sync Lanes below their source track.
+
 Recorder clocks can also be *compressed* rather than simply wrong: 137 minutes of takes stamped inside a 9-minute span. When that happens the engine keeps the device's current timeline spacing instead of squeezing the takes together. And if a solved placement would make a device's own clips overlap heavily, that device is left at its original position and the run log names the refusal. Camera sync is preserved; an ambiguous recorder block is never scattered.
 
 ### B-roll and unsynced clips are labelled honestly
@@ -62,7 +70,7 @@ The organizer and the sync engine now share one device-identity rule:
 - Recorders keep their folder identity, so **Tascam_wesele (audio1)** and **Tascam_wesele (audio2)** remain separate sources and separate audio tracks.
 - The organizer preview reports Camera / Recorder / B-roll roles where applicable.
 
-**Recommended order remains: Organize Tracks by Device first, then Sync.** A camera is still one video event with embedded audio. No camera-audio track is created, copied, or muted, and the two recorder folders are never merged into one source.
+**Recommended order remains: Organize Tracks by Device/Folder first, then Sync.** A camera's video stays on its `(V)` track; if companion audio exists, the organizer places it on the paired `(A)` track. Audio is never duplicated, copied, or muted, and the two recorder folders are never merged into one source.
 
 ### Tests and rollback
 
@@ -97,13 +105,14 @@ The v2 work was validated against synthetic global chains (A↔B↔C where A and
 
 Use the **Regression Case** fixture — 112 timeline events over 66 unique media files (46 grouped camera A/V primaries + 20 recorder WAVs):
 
-1. **Organization:** scanning reports four groups — `CAM 1 — Sony A7 III (V)`, `CAM 2 — Sony FX3 (V)`, `REC 1 — Tascam_wesele (audio1)`, `REC 2 — Tascam_wesele (audio2)`.
+1. **Organization:** scanning reports camera and recorder groups — `CAM 1 — Sony A7 III (V)` and `(A)`, `CAM 2 — Sony FX3 (V)` and `(A)`, `REC 1 — Tascam_wesele (audio1)`, `REC 2 — Tascam_wesele (audio2)`. The paired `(A)` tracks contain the existing camera audio events; no new audio events are created.
 2. **Untrusted clock:** the A7 III's 2018 container date produces an untrusted-clock warning that names **Sony A7 III**, and its epoch is not used for sequence offsets.
 3. **B-roll:** 17 short clips (under 15 s) are counted as B-roll; no normal 15 s+ clip is misclassified.
 4. **Dual recorders:** the two Tascam folders stay separate, each receives its own audio track, and no audio is duplicated or muted.
 5. **Global run:** a default run completes and the summary/log contains `Path: Global matching` with counts where audio-aligned + clock-placed + unaligned = 66 analyzed primaries (112 events with grouped companions).
 6. **Recorder guard:** because the Tascam filenames fit 137 minutes of media into 9 minutes, the log warns that timeline spacing is kept; any recorder block that would overlap is left at its original position, reported as unaligned, with **no new sync lanes**.
-6. **Legacy baseline:** a copy of the project with Global matching **off** logs `Path: Legacy master anchor` and completes coherently; compare moved/unaligned counts and clip-level differences.
-7. **Fallback:** a 1–2 clip project or an ambiguous subset logs the global fallback warning and completes through the legacy path.
-8. **Persistence:** the toggle and both clocks survive closing/reopening VEGAS; deleting `settings.json` returns to global on / Auto / Auto; a saved `global_matching: false` stays off.
-9. **No duplicate audio:** after organizing, camera media has one video event with embedded audio and each recorder folder has exactly one audio track.
+7. **Legacy baseline:** a copy of the project with Global matching **off** logs `Path: Legacy master anchor` and completes coherently; compare moved/unaligned counts and clip-level differences.
+8. **Fallback:** a 1–2 clip project or an ambiguous subset logs the global fallback warning and completes through the legacy path.
+9. **Persistence:** the toggle and both clocks survive closing/reopening VEGAS; deleting `settings.json` returns to global on / Auto / Auto; a saved `global_matching: false` stays off.
+10. **No duplicate audio:** after organizing, each camera's video is on `(V)`, existing companion audio on the paired `(A)`, and each recorder folder has exactly one audio track; nothing is duplicated or muted.
+11. **Responsiveness:** on a cold or larger project, scanning keeps VEGAS responsive and **Stop** cancels during the metadata pass without applying partial results.

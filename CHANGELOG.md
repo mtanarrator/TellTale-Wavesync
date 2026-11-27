@@ -9,7 +9,11 @@
 - **Honest placement labels:** clips without an audio edge are placed by clock/order where possible and marked `clock-placed`; prior-only components keep their position instead of guessing. B-roll (clips under 15 s) never anchors a sequence and may receive at most one audio edge.
 - **Destructive placements are refused:** when a device's timestamps are physically impossible (more media than their span can hold) the current timeline spacing is kept, and when a solved placement would make a device's own clips overlap heavily that device is left at its original position with an explicit warning. Camera sync is preserved; ambiguous recorder blocks are not scattered.
 - **DeviceIdentity organizer:** cameras resolve to model names (`Sony A7 III`, `Sony FX3`), while recorders keep folder identity (`Tascam_wesele (audio1)` / `(audio2)`). The preview can show Camera / Recorder / B-roll roles.
-- **No audio duplication:** a camera stays one video event with embedded audio; each recorder folder gets one audio track. Duplicate audio tracks created by older builds are not recreated and should be cleaned manually.
+- **No audio duplication:** camera video and its existing companion audio live on paired `CAM n — Name (V)` / `CAM n — Name (A)` tracks; a camera with no companion audio gets only `(V)`. Each recorder folder gets one audio track. Nothing is copied or muted. Duplicate tracks created by older builds are not recreated and should be cleaned manually.
+- **Responsive metadata probing:** organizer and sync take a fast COM snapshot on VEGAS's UI thread, then collect ffprobe metadata in parallel off-thread. The host stays responsive and Stop can be handled during the metadata pass; the project-generation guard still discards results if the project changes.
+- **Grouped A/V lane handling:** crossfade protection now relocates overlapping grouped camera units as whole units to adjacent Sync Lanes below the source track; single-track stacks stay on lane 0. New lanes are inserted next to their source track instead of at index 0, so upper video tracks and titles are not displaced.
+- **Group primary, drift and splits:** grouped A/V analysis prefers the audio event for stream, mute and trim data; relative drift is anchored per audio component and propagated across the edge graph; split points detected on a reverse edge are remapped for the anchor case; already-aligned groups no longer dirty the undo history or count as moved.
+- **Project-aware options:** the project frame rate and B-roll threshold now come from VEGAS/request options instead of hardcoded 25 fps and 15 s; sub-sample mode lowers the audio move deadzone so small corrections are applied.
 - **Tests and rollback:** Rust tests cover the synthetic global chain, sparse fallback, untrusted clocks, B-roll anchoring, and legacy parity. The pre-v2 build was archived before the change (`Backups\WaveSync_legacy_20261127_123741.zip`).
 
 ## v1.5.0 — Post-v1.4.3 audit fixes
@@ -19,13 +23,13 @@
 - **Project-switch safety:** opening or closing a project during analysis cancels the run and discards the manifest; lifecycle events also refresh the track list.
 - **Copyable, throttled log:** the activity log is a read-only text box with a **Copy Log** button and batched updates instead of a full rebuild per line.
 - **Defaults match the docs:** **Include video clips** and **Keep overlapping clips on separate tracks** now start **ON** (explicit saved `false` still wins).
-- **Organize Tracks by Device:** a new preview-first action groups timeline media by camera/recorder using ffprobe metadata, filename prefixes, and folders. Cameras get exactly one `CAM n — Name (V)` track with embedded audio (even if the mic is silent); recorders get `REC n — Name`. No camera audio is duplicated or muted. Preview supports rename/include/merge/split-by-folder, the pass is one Undo step, source tracks are kept, and re-runs reuse tracks.
+- **Organize Tracks by Device/Folder:** a new preview-first action groups timeline media by camera/recorder using ffprobe metadata, filename prefixes, and folders. Cameras get a `CAM n — Name (V)` track plus a paired `CAM n — Name (A)` track for existing companion audio (no duplication or muting); a camera without companion audio gets only `(V)`. Recorders get `REC n — Name`. Preview supports rename/include/merge/split-by-folder, the pass is one Undo step, source tracks are kept, and re-runs reuse tracks.
 - **Friendlier panel:** quick-setup presets (Multicam, Long recording, Damaged footage, Reset defaults), options grouped by intent with **Advanced** collapsed, a post-run result summary with an undo hint, and a **Warnings only** log filter. The master dropdown now reads **Auto (recommended)**.
 - **Envelope automation:** new Sync Lanes create missing envelopes and copy points plus base Volume/Pan/Composite levels.
 - **Engine decoders:** partial FFmpeg decodes are reported as warnings instead of silent success; the Symphonia resampler flushes its tail.
 - **Installer:** numeric VEGAS version ordering (`2027.0` beats `22.0`), relative build paths, uninstall cleanup for **all VEGAS versions** copies, and no `HKCU` access from the SYSTEM-context MSI action.
 - **Compatibility:** manifests remain backward compatible (`split_points_seconds` is still emitted; missing `playback_rate` reads as 1.0).
-- **Known limitation:** grouped A/V lane relocation is implemented but disabled pending VEGAS host validation; the MSI target remains VEGAS 2027 only.
+- **Known limitation (v1.5.0):** grouped A/V lane relocation was implemented but disabled pending VEGAS host validation; the MSI target remains VEGAS 2027 only. v2.0.0 enables grouped lane relocation.
 
 ## v1.4.3 — Deferred audit items
 
