@@ -74,7 +74,7 @@ The organizer and the sync engine now share one device-identity rule:
 
 ### Tests and rollback
 
-The v2 work was validated against synthetic global chains (A↔B↔C where A and C share no direct edge), sparse-fallback decisions, untrusted-clock selection, compressed-clock guards, B-roll anchoring, and a legacy-parity check with global matching off. Rust tests now cover 117 cases. The pre-v2 build was archived before the change as `Backups\WaveSync_legacy_20261127_123741.zip`.
+The v2 work was validated against synthetic global chains (A↔B↔C where A and C share no direct edge), sparse-fallback decisions, untrusted-clock selection, compressed-clock guards, B-roll anchoring, and a legacy-parity check with global matching off. Rust tests now cover 118 cases. The pre-v2 build was archived before the change as `Backups\WaveSync_legacy_20261127_123741.zip`.
 
 ---
 

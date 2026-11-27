@@ -191,7 +191,7 @@ wix build Installer\TellTaleWaveSync.wxs -arch x64 -ext WixToolset.UI.wixext -o 
 
 ```powershell
 cd vegas_sync_core
-cargo test                      # 117 tests: global graph/fallback, clocks, long-take, source-clock, preserve-order
+cargo test                      # 118 tests: global graph/fallback, clocks, long-take, source-clock, preserve-order
 
 cd ..
 dotnet build TestHarness\TestHarness.csproj -c Release
