@@ -52,31 +52,38 @@ namespace VegasAudioSync.Services
             public TrackEvent Event;
         }
 
+        /// <summary>
+        /// Snapshot of timeline events captured on the VEGAS UI thread so expensive
+        /// ffprobe metadata calls can run off the UI thread.
+        /// </summary>
+        public sealed class TimelineSnapshot
+        {
+            public List<DeviceEventRef> Events = new List<DeviceEventRef>();
+            public int SkippedWithoutTake;
+            public int SkippedWithoutMedia;
+        }
+
         // =====================================================================
         // Scan
         // =====================================================================
 
         public static DeviceScanResult Scan(Vegas vegas, string ffprobePath, Action<string> log)
         {
+            TimelineSnapshot snapshot = CaptureTimelineEvents(vegas);
+            return BuildScanResult(snapshot, ffprobePath, log, null);
+        }
+
+        /// <summary>
+        /// Fast UI-thread COM pass: reads timeline events and resolved media paths
+        /// without spawning any external processes.
+        /// </summary>
+        public static TimelineSnapshot CaptureTimelineEvents(Vegas vegas)
+        {
             if (vegas == null || vegas.Project == null)
                 throw new InvalidOperationException("No active VEGAS project loaded.");
 
-            var result = new DeviceScanResult();
+            var snapshot = new TimelineSnapshot();
             string projectDir = TryGetProjectDirectory(vegas);
-
-            bool probeAvailable = !string.IsNullOrEmpty(ffprobePath) && File.Exists(ffprobePath);
-            if (!probeAvailable)
-            {
-                AddWarning(result, log, "ffprobe was not found; grouping uses filename prefixes and media folders only.");
-            }
-
-            var probeCache = new Dictionary<string, ProbeInfo>(StringComparer.OrdinalIgnoreCase);
-            var candidates = new Dictionary<string, GroupCandidate>(StringComparer.OrdinalIgnoreCase);
-            int mediaEventCount = 0;
-            int probedFiles = 0;
-            int probeFailures = 0;
-            int skippedWithoutTake = 0;
-            int skippedWithoutMedia = 0;
 
             foreach (Track track in vegas.Project.Tracks)
             {
@@ -86,12 +93,11 @@ namespace VegasAudioSync.Services
                     Take take = null;
                     try { take = ev.ActiveTake; }
                     catch { take = null; }
-                    if (take == null) { skippedWithoutTake++; continue; }
+                    if (take == null) { snapshot.SkippedWithoutTake++; continue; }
 
                     string mediaPath = ResolveTakeFilePath(take, projectDir);
-                    if (string.IsNullOrEmpty(mediaPath)) { skippedWithoutMedia++; continue; }
+                    if (string.IsNullOrEmpty(mediaPath)) { snapshot.SkippedWithoutMedia++; continue; }
 
-                    string normalizedPath = NormalizePathKey(mediaPath);
                     string folder = null;
                     try { folder = Path.GetDirectoryName(mediaPath); }
                     catch { folder = null; }
@@ -106,7 +112,7 @@ namespace VegasAudioSync.Services
                     bool isGrouped = false;
                     try { isGrouped = ev.IsGrouped; } catch { isGrouped = false; }
 
-                    var eventRef = new DeviceEventRef
+                    snapshot.Events.Add(new DeviceEventRef
                     {
                         VegasEventId = ev.EventID,
                         TrackIndex = track.Index,
@@ -118,100 +124,172 @@ namespace VegasAudioSync.Services
                         LengthSeconds = lengthSeconds,
                         MediaOffsetSeconds = offsetSeconds,
                         PlaybackRate = SanitizePlaybackRate(SafePlaybackRate(ev))
+                    });
+                }
+            }
+
+            return snapshot;
+        }
+
+        /// <summary>
+        /// Thread-safe background pass: probes unique media files in parallel with
+        /// ffprobe and groups the captured events by recording device.
+        /// </summary>
+        public static DeviceScanResult BuildScanResult(
+            TimelineSnapshot snapshot,
+            string ffprobePath,
+            Action<string> log,
+            Func<bool> shouldCancel = null)
+        {
+            var result = new DeviceScanResult();
+            if (snapshot == null) return result;
+
+            bool probeAvailable = !string.IsNullOrEmpty(ffprobePath) && File.Exists(ffprobePath);
+            if (!probeAvailable)
+            {
+                AddWarning(result, log, "ffprobe was not found; grouping uses filename prefixes and media folders only.");
+            }
+
+            var probeCache = new System.Collections.Concurrent.ConcurrentDictionary<string, ProbeInfo>(StringComparer.OrdinalIgnoreCase);
+            int probedFiles = 0;
+            int probeFailures = 0;
+
+            if (probeAvailable && snapshot.Events.Count > 0)
+            {
+                var uniquePaths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (DeviceEventRef eventRef in snapshot.Events)
+                {
+                    if (eventRef == null || string.IsNullOrEmpty(eventRef.MediaPath)) continue;
+                    string norm = NormalizePathKey(eventRef.MediaPath);
+                    if (!uniquePaths.ContainsKey(norm))
+                    {
+                        uniquePaths[norm] = eventRef.MediaPath;
+                    }
+                }
+
+                var parallelOptions = new System.Threading.Tasks.ParallelOptions
+                {
+                    MaxDegreeOfParallelism = 4
+                };
+                System.Threading.Tasks.Parallel.ForEach(uniquePaths, parallelOptions, (kv, loopState) =>
+                {
+                    if (shouldCancel != null && shouldCancel())
+                    {
+                        loopState.Stop();
+                        return;
+                    }
+
+                    string error;
+                    ProbeInfo probe = ProbeMedia(ffprobePath, kv.Value, out error);
+                    probeCache[kv.Key] = probe;
+                    System.Threading.Interlocked.Increment(ref probedFiles);
+                    if (!string.IsNullOrEmpty(error))
+                    {
+                        System.Threading.Interlocked.Increment(ref probeFailures);
+                    }
+                });
+
+                if (shouldCancel != null && shouldCancel())
+                {
+                    throw new OperationCanceledException("Device scan cancelled.");
+                }
+            }
+
+            var candidates = new Dictionary<string, GroupCandidate>(StringComparer.OrdinalIgnoreCase);
+            int mediaEventCount = snapshot.Events.Count;
+            int skippedWithoutTake = snapshot.SkippedWithoutTake;
+            int skippedWithoutMedia = snapshot.SkippedWithoutMedia;
+
+            foreach (DeviceEventRef eventRef in snapshot.Events)
+            {
+                string mediaPath = eventRef.MediaPath;
+                string normalizedPath = NormalizePathKey(mediaPath);
+                string folder = eventRef.MediaFolder;
+                bool trackIsVideo = eventRef.IsVideoEvent;
+
+                ProbeInfo probe = null;
+                if (probeAvailable)
+                {
+                    probeCache.TryGetValue(normalizedPath, out probe);
+                }
+
+                string make = probe != null ? CleanValue(probe.Make) : null;
+                string model = probe != null ? CleanValue(probe.Model) : null;
+
+                // DeviceIdentity is the single source of truth for the grouping
+                // key (it matches TimelineExtractor's SourceKey). Metadata only
+                // enriches evidence; it never replaces the key or display name.
+                string identityKey = DeviceIdentity.Key(mediaPath, folder);
+                string displayName = DeviceIdentity.DisplayName(mediaPath, folder);
+                string evidence = DeviceIdentity.Evidence(mediaPath, folder);
+                DeviceConfidence confidence = MapConfidence(DeviceIdentity.Confidence(mediaPath, folder));
+
+                bool hasMetadata = probe != null
+                    && (!string.IsNullOrEmpty(make) || !string.IsNullOrEmpty(model));
+                string metadataEvidence = hasMetadata
+                    ? ("metadata " + ((make ?? string.Empty) + " " + (model ?? string.Empty)).Trim()).Trim()
+                    : null;
+
+                string key;
+                if (!string.IsNullOrEmpty(identityKey))
+                {
+                    key = identityKey;
+                    if (!string.IsNullOrEmpty(metadataEvidence))
+                    {
+                        evidence = string.IsNullOrEmpty(evidence)
+                            ? metadataEvidence
+                            : evidence + "; " + metadataEvidence;
+                    }
+                }
+                else if (hasMetadata)
+                {
+                    // Last resort: no path-based identity, but ffprobe knows the device.
+                    key = "meta:" + (make ?? string.Empty).ToLowerInvariant()
+                        + "|" + (model ?? string.Empty).ToLowerInvariant();
+                    displayName = BuildMetadataName(make, model);
+                    evidence = metadataEvidence;
+                    confidence = DeviceConfidence.High;
+                }
+                else
+                {
+                    // No model/prefix/folder evidence: keep the events visible
+                    // instead of dropping them, but never merge them silently.
+                    string folderKey = string.IsNullOrEmpty(folder)
+                        ? string.Empty
+                        : folder.TrimEnd('\\', '/').ToLowerInvariant();
+                    key = "folder:" + folderKey;
+                    confidence = DeviceConfidence.Low;
+                    if (string.IsNullOrEmpty(displayName)
+                        || string.Equals(displayName, "Unknown", StringComparison.OrdinalIgnoreCase))
+                    {
+                        displayName = FolderLeaf(folder) ?? "Unknown device";
+                    }
+                    if (string.IsNullOrEmpty(evidence)) evidence = "folder leaf fallback";
+                }
+
+                GroupCandidate candidate;
+                if (!candidates.TryGetValue(key, out candidate))
+                {
+                    candidate = new GroupCandidate
+                    {
+                        Key = key,
+                        Confidence = confidence,
+                        DisplayName = displayName,
+                        Evidence = evidence,
+                        Folder = folder
                     };
-                    mediaEventCount++;
+                    candidates[key] = candidate;
+                }
+                else if (string.IsNullOrEmpty(candidate.DisplayName))
+                {
+                    candidate.DisplayName = displayName;
+                }
 
-                    ProbeInfo probe = null;
-                    if (probeAvailable)
-                    {
-                        if (!probeCache.TryGetValue(normalizedPath, out probe))
-                        {
-                            string error;
-                            probe = ProbeMedia(ffprobePath, mediaPath, out error);
-                            probeCache[normalizedPath] = probe;
-                            probedFiles++;
-                            if (!string.IsNullOrEmpty(error)) probeFailures++;
-                        }
-                    }
-
-                    string make = probe != null ? CleanValue(probe.Make) : null;
-                    string model = probe != null ? CleanValue(probe.Model) : null;
-
-                    // DeviceIdentity is the single source of truth for the grouping
-                    // key (it matches TimelineExtractor's SourceKey). Metadata only
-                    // enriches evidence; it never replaces the key or display name.
-                    string identityKey = DeviceIdentity.Key(mediaPath, folder);
-                    string displayName = DeviceIdentity.DisplayName(mediaPath, folder);
-                    string evidence = DeviceIdentity.Evidence(mediaPath, folder);
-                    DeviceConfidence confidence = MapConfidence(DeviceIdentity.Confidence(mediaPath, folder));
-
-                    bool hasMetadata = probe != null
-                        && (!string.IsNullOrEmpty(make) || !string.IsNullOrEmpty(model));
-                    string metadataEvidence = hasMetadata
-                        ? ("metadata " + ((make ?? string.Empty) + " " + (model ?? string.Empty)).Trim()).Trim()
-                        : null;
-
-                    string key;
-                    if (!string.IsNullOrEmpty(identityKey))
-                    {
-                        key = identityKey;
-                        if (!string.IsNullOrEmpty(metadataEvidence))
-                        {
-                            evidence = string.IsNullOrEmpty(evidence)
-                                ? metadataEvidence
-                                : evidence + "; " + metadataEvidence;
-                        }
-                    }
-                    else if (hasMetadata)
-                    {
-                        // Last resort: no path-based identity, but ffprobe knows the device.
-                        key = "meta:" + (make ?? string.Empty).ToLowerInvariant()
-                            + "|" + (model ?? string.Empty).ToLowerInvariant();
-                        displayName = BuildMetadataName(make, model);
-                        evidence = metadataEvidence;
-                        confidence = DeviceConfidence.High;
-                    }
-                    else
-                    {
-                        // No model/prefix/folder evidence: keep the events visible
-                        // instead of dropping them, but never merge them silently.
-                        string folderKey = string.IsNullOrEmpty(folder)
-                            ? string.Empty
-                            : folder.TrimEnd('\\', '/').ToLowerInvariant();
-                        key = "folder:" + folderKey;
-                        confidence = DeviceConfidence.Low;
-                        if (string.IsNullOrEmpty(displayName)
-                            || string.Equals(displayName, "Unknown", StringComparison.OrdinalIgnoreCase))
-                        {
-                            displayName = FolderLeaf(folder) ?? "Unknown device";
-                        }
-                        if (string.IsNullOrEmpty(evidence)) evidence = "folder leaf fallback";
-                    }
-
-                    GroupCandidate candidate;
-                    if (!candidates.TryGetValue(key, out candidate))
-                    {
-                        candidate = new GroupCandidate
-                        {
-                            Key = key,
-                            Confidence = confidence,
-                            DisplayName = displayName,
-                            Evidence = evidence,
-                            Folder = folder
-                        };
-                        candidates[key] = candidate;
-                    }
-                    else if (string.IsNullOrEmpty(candidate.DisplayName))
-                    {
-                        candidate.DisplayName = displayName;
-                    }
-
-                    candidate.Events.Add(eventRef);
-                    bool mediaHasVideo = probe != null && probe.HasVideo;
-                    if (trackIsVideo || mediaHasVideo)
-                    {
-                        candidate.AnyVideo = true;
-                    }
+                candidate.Events.Add(eventRef);
+                bool mediaHasVideo = probe != null && probe.HasVideo;
+                if (trackIsVideo || mediaHasVideo)
+                {
+                    candidate.AnyVideo = true;
                 }
             }
 
@@ -419,9 +497,15 @@ namespace VegasAudioSync.Services
 
                             string deviceName = SafeTrackName(group.Name);
                             string videoName = string.Format("CAM {0} \u2014 {1} (V)", number, deviceName);
+                            string audioName = string.Format("CAM {0} \u2014 {1} (A)", number, deviceName);
                             string recorderName = string.Format("REC {0} \u2014 {1}", number, deviceName);
+                            bool hasCameraAudio = false;
+                            foreach (LiveRef item in live)
+                            {
+                                if (!item.Ref.IsVideoEvent) { hasCameraAudio = true; break; }
+                            }
                             bool alreadyInPlace = group.Kind == DeviceKind.Camera
-                                ? AllVideoEventsOnTrack(live, videoName)
+                                ? (hasCameraAudio ? AllEventsOnTracks(live, videoName, audioName) : AllVideoEventsOnTrack(live, videoName))
                                 : AllEventsOnTracks(live, recorderName, null);
 
                             if (group.Kind == DeviceKind.Camera)
@@ -480,30 +564,43 @@ namespace VegasAudioSync.Services
         {
             string deviceName = SafeTrackName(group.Name);
             string videoName = string.Format("CAM {0} \u2014 {1} (V)", number, deviceName);
+            string audioName = string.Format("CAM {0} \u2014 {1} (A)", number, deviceName);
 
-            Track videoTrack = FindOrCreateTrack(vegas, videoName, true, result, log);
-            if (videoTrack == null)
-            {
-                throw new InvalidOperationException("VEGAS did not provide the camera video track.");
-            }
-
-            // A camera clip is one video event with embedded audio (even if the mic
-            // was muted). Cameras always map to exactly one video track; any rare
-            // separate audio-only clips are left where they are.
-            targetNames.Add(videoName);
-            int audioOnlyLeft = 0;
+            bool hasVideo = false;
+            bool hasAudio = false;
             foreach (LiveRef item in live)
             {
-                if (!item.Ref.IsVideoEvent) audioOnlyLeft++;
+                if (item.Ref.IsVideoEvent) hasVideo = true;
+                else hasAudio = true;
             }
 
-            MoveLiveEvents(live, videoTrack, null, result, log);
-            VerifyGroupedTracks(live, videoTrack, null, result, log);
-
-            if (audioOnlyLeft > 0)
+            Track videoTrack = null;
+            if (hasVideo)
             {
-                log?.Invoke($"  Camera '{deviceName}': left {audioOnlyLeft} separate audio clip(s) on their existing track(s).");
+                videoTrack = FindOrCreateTrack(vegas, videoName, true, result, log);
+                if (videoTrack == null)
+                {
+                    throw new InvalidOperationException("VEGAS did not provide the camera video track.");
+                }
+                targetNames.Add(videoName);
             }
+
+            // In VEGAS Pro, camera scratch audio lives as a separate AudioEvent on an
+            // AudioTrack (grouped with the VideoEvent). Give it a paired CAM (A) track
+            // so camera audio is organized alongside its video instead of left stranded.
+            Track audioTrack = null;
+            if (hasAudio)
+            {
+                audioTrack = FindOrCreateTrack(vegas, audioName, false, result, log);
+                if (audioTrack == null)
+                {
+                    throw new InvalidOperationException("VEGAS did not provide the camera audio track.");
+                }
+                targetNames.Add(audioName);
+            }
+
+            MoveLiveEvents(live, videoTrack, audioTrack, result, log);
+            VerifyGroupedTracks(live, videoTrack, audioTrack, result, log);
         }
 
         private static void ApplyRecorderGroup(
@@ -586,9 +683,36 @@ namespace VegasAudioSync.Services
                 return candidate;
             }
 
-            Track created = video
-                ? (Track)vegas.Project.AddVideoTrack()
-                : (Track)vegas.Project.AddAudioTrack();
+            Track created = null;
+            if (video)
+            {
+                // Insert below existing video tracks instead of at index 0 so we do not
+                // cover titles, lower-thirds, or upper composite tracks.
+                int lastVideoIndex = -1;
+                foreach (Track existing in vegas.Project.Tracks)
+                {
+                    if (SafeIsValid(existing) && SafeIsVideo(existing) && existing.Index > lastVideoIndex)
+                    {
+                        lastVideoIndex = existing.Index;
+                    }
+                }
+                int insertIndex = lastVideoIndex >= 0
+                    ? Math.Min(vegas.Project.Tracks.Count, lastVideoIndex + 1)
+                    : 0;
+                try
+                {
+                    created = new VideoTrack(insertIndex, name);
+                    vegas.Project.Tracks.Add(created);
+                }
+                catch
+                {
+                    created = vegas.Project.AddVideoTrack();
+                }
+            }
+            else
+            {
+                created = vegas.Project.AddAudioTrack();
+            }
 
             if (created == null)
             {

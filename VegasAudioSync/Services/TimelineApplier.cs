@@ -28,13 +28,11 @@ namespace VegasAudioSync.Services
         private const double TimelineEditToleranceSeconds = 0.05;
 
         /// <summary>
-        /// Grouped A/V lane relocation. DISABLED by default: reassigning the track of a
-        /// grouped event is a VEGAS host behavior that cannot be validated outside the
-        /// host. Enabling it also requires verifying that moving one member through
-        /// <c>TrackEvent.Track</c> does not drag the other members along (which would
-        /// double-apply the lane move). See FINDINGS.md #1.
+        /// Grouped A/V lane relocation. Relocates overlapping moved group units as a
+        /// whole to adjacent Sync Lanes of each member's source track, preserving
+        /// TrackEventGroup membership (and re-grouping defensively if the host drops it).
         /// </summary>
-        private const bool EnableGroupLaneMove = false;
+        private const bool EnableGroupLaneMove = true;
 
         /// <summary>Jumps larger than this are treated as a bad measurement and clamped.</summary>
         private const double MaxStepJumpSeconds = 10.0;
@@ -176,13 +174,15 @@ namespace VegasAudioSync.Services
             var changedVegasEventIds = new HashSet<long>();
             int movedEventsCount = 0;
 
+            bool subSample = request != null && request.Options != null && request.Options.SubSampleAccuracy;
+            double audioMoveThresholdMs = subSample ? 0.05 : 1.0;
+
             using (var undo = new UndoBlock("Synchronize Audio & Video Events (TellTale WaveSync)"))
             {
                 var handledGroupEventIds = new HashSet<string>(StringComparer.Ordinal);
                 var groupMemberVegasIds = new HashSet<long>();
 
-                // Groups that were fully moved by this run, as live event units. Only
-                // used by the (disabled) group lane relocation path.
+                // Groups that were fully moved by this run, as live event units.
                 var movedGroupUnits = new List<List<TrackEvent>>();
 
                 if (EnableAtomicGroupMove && groups != null && groups.Count > 0)
@@ -202,6 +202,7 @@ namespace VegasAudioSync.Services
                                 handledGroupEventIds,
                                 groupMemberVegasIds,
                                 movedGroupUnits,
+                                audioMoveThresholdMs,
                                 logCallback,
                                 ref applyResult.Skipped);
                         }
@@ -277,6 +278,7 @@ namespace VegasAudioSync.Services
                                 syncResult,
                                 syncedVegasEventIds,
                                 changedVegasEventIds,
+                                audioMoveThresholdMs,
                                 logCallback,
                                 out changed);
 
@@ -405,6 +407,7 @@ namespace VegasAudioSync.Services
             HashSet<string> handledGroupEventIds,
             HashSet<long> groupMemberVegasIds,
             List<List<TrackEvent>> movedGroupUnits,
+            double audioMoveThresholdMs,
             Action<string> logCallback,
             ref int skipped)
         {
@@ -536,8 +539,29 @@ namespace VegasAudioSync.Services
                 ? ClampResolvedRate(primaryResult.PlaybackRate)
                 : primaryOldRate;
 
+            var splitPlan = BuildSplitPlan(primaryResult, logCallback);
+            bool needsMove = Math.Abs(delta) * 1000.0 > audioMoveThresholdMs;
+            bool anyRateChange = false;
+            if (primaryEligible)
+            {
+                for (int i = 0; i < memberEvents.Count; i++)
+                {
+                    if (Math.Abs(targetRate - originalRates[i]) > 1e-6)
+                    {
+                        anyRateChange = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!needsMove && !anyRateChange && splitPlan.Count == 0)
+            {
+                logCallback?.Invoke($"  Group '{group.GroupId}' already at resolved position.");
+                return 0;
+            }
+
             bool rateChanged = false;
-            int moved;
+            int moved = 0;
             if (AutoMoveCompanionsInApplier)
             {
                 var movedIndexes = new List<int>();
@@ -546,7 +570,12 @@ namespace VegasAudioSync.Services
                     for (int i = 0; i < memberEvents.Count; i++)
                     {
                         TrackEvent ev = memberEvents[i];
-                        ev.AdjustStartLength(Timecode.FromMilliseconds(targets[i] * 1000.0), ev.Length, false);
+                        bool memberChanged = false;
+                        if (needsMove)
+                        {
+                            ev.AdjustStartLength(Timecode.FromMilliseconds(targets[i] * 1000.0), ev.Length, false);
+                            memberChanged = true;
+                        }
                         bool memberEligible = primaryEligible
                             && rateHistory != null
                             && rateHistory.IsEligible(
@@ -560,14 +589,18 @@ namespace VegasAudioSync.Services
                             if (ApplyPlaybackRate(ev, originalRates[i], memberTarget, group.GroupId, logCallback))
                             {
                                 rateChanged = true;
+                                memberChanged = true;
                                 rateHistory.Record(ev.EventID, GetMediaPath(ev), memberTarget);
                             }
                         }
-                        movedIndexes.Add(i);
-                        changedVegasEventIds.Add(ev.EventID);
-                        groupMemberVegasIds.Add(ev.EventID);
+                        if (memberChanged || splitPlan.Count > 0)
+                        {
+                            movedIndexes.Add(i);
+                            changedVegasEventIds.Add(ev.EventID);
+                            groupMemberVegasIds.Add(ev.EventID);
+                            moved++;
+                        }
                     }
-                    moved = memberEvents.Count;
                 }
                 catch (Exception ex)
                 {
@@ -592,10 +625,13 @@ namespace VegasAudioSync.Services
                 TrackEvent primary = memberEvents[primaryIndex];
                 try
                 {
-                    primary.AdjustStartLength(
-                        Timecode.FromMilliseconds(targets[primaryIndex] * 1000.0),
-                        primary.Length,
-                        false);
+                    if (needsMove)
+                    {
+                        primary.AdjustStartLength(
+                            Timecode.FromMilliseconds(targets[primaryIndex] * 1000.0),
+                            primary.Length,
+                            false);
+                    }
                     if (Math.Abs(targetRate - originalRates[primaryIndex]) > 1e-6)
                     {
                         if (ApplyPlaybackRate(primary, originalRates[primaryIndex], targetRate, group.GroupId, logCallback))
@@ -638,7 +674,6 @@ namespace VegasAudioSync.Services
             // Apply the primary's split recommendations at the same global timeline
             // points to every member that contains them. The right-hand piece of every
             // member receives the same step-jump shift so internal offsets stay rigid.
-            var splitPlan = BuildSplitPlan(primaryResult, logCallback);
             if (splitPlan.Count > 0)
             {
                 foreach (var split in splitPlan)
@@ -853,6 +888,7 @@ namespace VegasAudioSync.Services
             EventSyncResult syncResult,
             HashSet<long> syncedVegasEventIds,
             HashSet<long> changedVegasEventIds,
+            double audioMoveThresholdMs,
             Action<string> logCallback,
             out bool changed)
         {
@@ -863,9 +899,10 @@ namespace VegasAudioSync.Services
 
             Timecode newStart = Timecode.FromMilliseconds(syncResult.ResolvedStartSeconds * 1000.0);
             Timecode deltaTc = newStart - originalStart;
+            double moveThresholdMs = (ev.Track != null && ev.Track.IsAudio()) ? audioMoveThresholdMs : 1.0;
 
             // 1. Apply resolved start position
-            if (Math.Abs(deltaTc.ToMilliseconds()) > 1.0)
+            if (Math.Abs(deltaTc.ToMilliseconds()) > moveThresholdMs)
             {
                 ev.AdjustStartLength(newStart, ev.Length, false);
                 moved++;
@@ -964,6 +1001,11 @@ namespace VegasAudioSync.Services
                         changedVegasEventIds.Add(postEv.EventID);
                     }
                 }
+            }
+
+            if (changed && moved == 0)
+            {
+                moved = 1;
             }
 
             return moved;
@@ -1373,11 +1415,13 @@ namespace VegasAudioSync.Services
                 try
                 {
                     var group = new TrackEventGroup(vegas.Project);
+                    // VEGAS COM requires the group to be registered on the project
+                    // before adding members (see verify_group_behavior.cs).
+                    vegas.Project.TrackEventGroups.Add(group);
                     foreach (var ev in newlyGrouped)
                     {
                         group.Add(ev);
                     }
-                    vegas.Project.Groups.Add(group);
                 }
                 catch
                 {
@@ -1517,9 +1561,7 @@ namespace VegasAudioSync.Services
                     {
                         try
                         {
-                            newTrack = track.IsVideo()
-                                ? (Track)vegas.Project.AddVideoTrack()
-                                : (Track)vegas.Project.AddAudioTrack();
+                            newTrack = InsertAdjacentTrack(vegas, track);
                         }
                         catch (Exception ex)
                         {
@@ -1609,26 +1651,108 @@ namespace VegasAudioSync.Services
 
             if (units.Count == 0) return;
 
-            var unitStarts = new List<double>(units.Count);
-            var unitEnds = new List<double>(units.Count);
+            // Track-aware group lane assignment: two group units only conflict if they
+            // share at least one source track and overlap in time on that track (or
+            // overlap an untouched/pinned event on that track). Unrelated cameras on
+            // different tracks stay on lane 0 and never spawn unnecessary lanes.
+            var unitEventIds = new HashSet<long>();
+            var touchedTracks = new Dictionary<int, Track>();
             foreach (var unit in units)
             {
-                double minStart = double.MaxValue;
-                double maxEnd = double.MinValue;
                 foreach (var ev in unit)
                 {
-                    double start = ev.Start.ToMilliseconds();
-                    double end = ev.End.ToMilliseconds();
-                    if (start < minStart) minStart = start;
-                    if (end > maxEnd) maxEnd = end;
+                    unitEventIds.Add(ev.EventID);
+                    if (ev.Track != null && !touchedTracks.ContainsKey(ev.Track.Index))
+                    {
+                        touchedTracks[ev.Track.Index] = ev.Track;
+                    }
                 }
-                unitStarts.Add(minStart);
-                unitEnds.Add(maxEnd);
             }
 
-            int unitLaneCount;
-            var laneByUnit = LanePartitioner.Assign(unitStarts, unitEnds, out unitLaneCount, 1.0, null);
-            if (unitLaneCount <= 1) return;
+            // Occupied intervals per (sourceTrackIndex, laneIndex). Seed lane 0 with
+            // non-unit events already on each touched track.
+            var occupied = new Dictionary<Tuple<int, int>, List<Tuple<double, double>>>();
+            foreach (var kv in touchedTracks)
+            {
+                var lane0 = new List<Tuple<double, double>>();
+                foreach (TrackEvent ev in kv.Value.Events)
+                {
+                    if (!ev.IsValid() || unitEventIds.Contains(ev.EventID)) continue;
+                    lane0.Add(Tuple.Create(ev.Start.ToMilliseconds(), ev.End.ToMilliseconds()));
+                }
+                occupied[Tuple.Create(kv.Key, 0)] = lane0;
+            }
+
+            // Sort units by earliest start for deterministic greedy packing.
+            var unitOrder = new List<int>(units.Count);
+            var unitMinStart = new double[units.Count];
+            for (int u = 0; u < units.Count; u++)
+            {
+                double minS = double.MaxValue;
+                foreach (var ev in units[u])
+                {
+                    double s = ev.Start.ToMilliseconds();
+                    if (s < minS) minS = s;
+                }
+                unitMinStart[u] = minS;
+                unitOrder.Add(u);
+            }
+            unitOrder.Sort((a, b) =>
+            {
+                int cmp = unitMinStart[a].CompareTo(unitMinStart[b]);
+                return cmp != 0 ? cmp : a.CompareTo(b);
+            });
+
+            var laneByUnit = new int[units.Count];
+            int maxLaneUsed = 0;
+            foreach (int u in unitOrder)
+            {
+                int chosenLane = 0;
+                while (chosenLane <= MaxLanesPerTrack)
+                {
+                    bool conflicts = false;
+                    foreach (var ev in units[u])
+                    {
+                        if (ev.Track == null) continue;
+                        var key = Tuple.Create(ev.Track.Index, chosenLane);
+                        List<Tuple<double, double>> list;
+                        if (!occupied.TryGetValue(key, out list)) continue;
+
+                        double s = ev.Start.ToMilliseconds();
+                        double e = ev.End.ToMilliseconds();
+                        foreach (var iv in list)
+                        {
+                            if (s < iv.Item2 - 1.0 && e > iv.Item1 + 1.0)
+                            {
+                                conflicts = true;
+                                break;
+                            }
+                        }
+                        if (conflicts) break;
+                    }
+
+                    if (!conflicts) break;
+                    chosenLane++;
+                }
+
+                laneByUnit[u] = chosenLane;
+                if (chosenLane > maxLaneUsed) maxLaneUsed = chosenLane;
+
+                foreach (var ev in units[u])
+                {
+                    if (ev.Track == null) continue;
+                    var key = Tuple.Create(ev.Track.Index, chosenLane);
+                    List<Tuple<double, double>> list;
+                    if (!occupied.TryGetValue(key, out list))
+                    {
+                        list = new List<Tuple<double, double>>();
+                        occupied[key] = list;
+                    }
+                    list.Add(Tuple.Create(ev.Start.ToMilliseconds(), ev.End.ToMilliseconds()));
+                }
+            }
+
+            if (maxLaneUsed <= 0) return;
 
             int relocated = 0;
             for (int u = 0; u < units.Count; u++)
@@ -1641,10 +1765,18 @@ namespace VegasAudioSync.Services
                     continue;
                 }
 
+                // Snapshot each member's source track before moving any member.
+                var memberTracks = new List<Tuple<TrackEvent, Track>>(units[u].Count);
                 foreach (var member in units[u])
                 {
-                    Track sourceTrack = member.Track;
-                    if (sourceTrack == null) continue;
+                    if (member.Track != null) memberTracks.Add(Tuple.Create(member, member.Track));
+                }
+
+                bool anyUngrouped = false;
+                foreach (var pair in memberTracks)
+                {
+                    TrackEvent member = pair.Item1;
+                    Track sourceTrack = pair.Item2;
 
                     bool created;
                     Track lane = GetOrCreateLane(vegas, sourceTrack, laneNumber, units[u], out created, logCallback);
@@ -1661,6 +1793,7 @@ namespace VegasAudioSync.Services
                         {
                             throw new InvalidOperationException("VEGAS rejected the group member move to the new lane.");
                         }
+                        if (!member.IsGrouped) anyUngrouped = true;
                         relocated++;
                         eventsRelocated++;
                     }
@@ -1669,10 +1802,52 @@ namespace VegasAudioSync.Services
                         logCallback?.Invoke($"  WARNING: could not move a grouped event to a new lane: {ex.Message}");
                     }
                 }
+
+                // Defensive re-group if VEGAS dropped TrackEventGroup membership on track move.
+                if (anyUngrouped && memberTracks.Count > 1)
+                {
+                    try
+                    {
+                        var rebuilt = new TrackEventGroup(vegas.Project);
+                        vegas.Project.TrackEventGroups.Add(rebuilt);
+                        foreach (var pair in memberTracks)
+                        {
+                            if (pair.Item1.IsValid()) rebuilt.Add(pair.Item1);
+                        }
+                    }
+                    catch
+                    {
+                        // Best-effort re-group.
+                    }
+                }
             }
 
             logCallback?.Invoke(
                 $"Group lane relocation: {units.Count} group unit(s), {relocated} member(s) relocated by group index.");
+        }
+
+        /// <summary>
+        /// Inserts a new track of the same media type directly below <paramref name="sourceTrack"/>
+        /// instead of at track index 0 (where VEGAS' AddVideoTrack() would occlude titles and
+        /// upper video tracks).
+        /// </summary>
+        private static Track InsertAdjacentTrack(Vegas vegas, Track sourceTrack)
+        {
+            int insertIndex = Math.Min(vegas.Project.Tracks.Count, sourceTrack.Index + 1);
+            try
+            {
+                Track adjacent = sourceTrack.IsVideo()
+                    ? (Track)new VideoTrack(insertIndex, string.Empty)
+                    : (Track)new AudioTrack(insertIndex, string.Empty);
+                vegas.Project.Tracks.Add(adjacent);
+                return adjacent;
+            }
+            catch
+            {
+                return sourceTrack.IsVideo()
+                    ? (Track)vegas.Project.AddVideoTrack()
+                    : (Track)vegas.Project.AddAudioTrack();
+            }
         }
 
         /// <summary>
@@ -1697,9 +1872,7 @@ namespace VegasAudioSync.Services
 
             try
             {
-                lane = sourceTrack.IsVideo()
-                    ? (Track)vegas.Project.AddVideoTrack()
-                    : (Track)vegas.Project.AddAudioTrack();
+                lane = InsertAdjacentTrack(vegas, sourceTrack);
             }
             catch (Exception ex)
             {

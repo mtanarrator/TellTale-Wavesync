@@ -76,10 +76,20 @@ namespace VegasAudioSync.UI
         /// are locked while the mode is active. Clicking a locked toggle explains the
         /// conflict and lets the operator override it (which turns the mode off).
         /// </summary>
+        private object _globalMatchingDefaultToolTip;
+        private object _timeSourceDefaultToolTip;
+        private object _clipOrderDefaultToolTip;
+
         private void SetupToggleInterlocks()
         {
+            _globalMatchingDefaultToolTip = ChkGlobalMatching.ToolTip;
+            _timeSourceDefaultToolTip = CmbTimeSource.ToolTip;
+            _clipOrderDefaultToolTip = CmbClipOrder.ToolTip;
+
             ChkPreserveOrder.Checked += PreserveOrder_Checked;
             ChkPreserveOrder.Unchecked += PreserveOrder_Unchecked;
+            ChkGlobalMatching.Checked += GlobalMatching_Toggled;
+            ChkGlobalMatching.Unchecked += GlobalMatching_Toggled;
 
             foreach (CheckBox toggle in PreserveConflicts())
             {
@@ -87,6 +97,41 @@ namespace VegasAudioSync.UI
                 toggle.PreviewKeyDown += LockedToggle_PreviewKeyDown;
                 toggle.Checked += LockedToggle_Checked;
             }
+        }
+
+        private void GlobalMatching_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_suppressInterlock) return;
+            UpdateClockControlsState();
+        }
+
+        /// <summary>
+        /// Keeps Global Matching, Time Source, and Clip Order honest about when
+        /// they actually take effect: DST mode bypasses Global Matching entirely,
+        /// and Time Source / Clip Order only apply inside Global Matching.
+        /// </summary>
+        private void UpdateClockControlsState()
+        {
+            bool dstOn = ChkPreserveOrder.IsChecked == true;
+            bool globalOn = ChkGlobalMatching.IsChecked == true && !dstOn;
+
+            ChkGlobalMatching.IsEnabled = !dstOn;
+            ChkGlobalMatching.Opacity = dstOn ? 0.45 : 1.0;
+            ChkGlobalMatching.ToolTip = dstOn
+                ? "Bypassed while " + DstDisplayName + " is ON (DST mode always uses rigid per-source audio placement)."
+                : _globalMatchingDefaultToolTip;
+
+            CmbTimeSource.IsEnabled = globalOn;
+            CmbTimeSource.Opacity = globalOn ? 1.0 : 0.45;
+            CmbTimeSource.ToolTip = dstOn
+                ? "Ignored while " + DstDisplayName + " is ON."
+                : (globalOn ? _timeSourceDefaultToolTip : "Only applies when Global matching is ON.");
+
+            CmbClipOrder.IsEnabled = globalOn;
+            CmbClipOrder.Opacity = globalOn ? 1.0 : 0.45;
+            CmbClipOrder.ToolTip = dstOn
+                ? "Ignored while " + DstDisplayName + " is ON."
+                : (globalOn ? _clipOrderDefaultToolTip : "Only applies when Global matching is ON.");
         }
 
         private CheckBox[] PreserveConflicts()
@@ -146,6 +191,7 @@ namespace VegasAudioSync.UI
             }
 
             if (TxtPreserveHint != null) TxtPreserveHint.Visibility = Visibility.Visible;
+            UpdateClockControlsState();
         }
 
         private void PreserveOrder_Unchecked(object sender, RoutedEventArgs e)
@@ -156,6 +202,7 @@ namespace VegasAudioSync.UI
             }
 
             if (TxtPreserveHint != null) TxtPreserveHint.Visibility = Visibility.Collapsed;
+            UpdateClockControlsState();
         }
 
         private void LockToggle(CheckBox toggle)
@@ -279,6 +326,7 @@ namespace VegasAudioSync.UI
             {
                 EnforcePreserveInterlocks(false);
             }
+            UpdateClockControlsState();
         }
 
         private void WireSettingsPersistence()
@@ -467,6 +515,12 @@ namespace VegasAudioSync.UI
 
         private void Vegas_ProjectOpened(object sender, EventArgs e)
         {
+            if (Dispatcher != null && !Dispatcher.CheckAccess())
+            {
+                PostToUi(() => Vegas_ProjectOpened(sender, e));
+                return;
+            }
+
             // Any analysis started against the previous project must not be applied.
             _projectGeneration++;
             _cancelRequested = false;
@@ -481,6 +535,12 @@ namespace VegasAudioSync.UI
 
         private void Vegas_ProjectClosed(object sender, EventArgs e)
         {
+            if (Dispatcher != null && !Dispatcher.CheckAccess())
+            {
+                PostToUi(() => Vegas_ProjectClosed(sender, e));
+                return;
+            }
+
             _projectGeneration++;
             _cancelRequested = true;
 
@@ -492,6 +552,12 @@ namespace VegasAudioSync.UI
 
         private void Vegas_TrackCountChanged(object sender, EventArgs e)
         {
+            if (Dispatcher != null && !Dispatcher.CheckAccess())
+            {
+                PostToUi(() => Vegas_TrackCountChanged(sender, e));
+                return;
+            }
+
             // ApplyManifest adds tracks itself; re-enumerating the project mid-apply
             // would churn the combo box for no benefit, so wait until the pass ends.
             if (_syncInProgress) return;
@@ -600,17 +666,26 @@ namespace VegasAudioSync.UI
             bool restoreSavedMaster = _initialTrackRefresh;
             _initialTrackRefresh = false;
 
-            // Preserve the operator's choice across refreshes.
+            // Preserve the operator's choice across refreshes (and track reorders).
             string previousTrackId = null;
+            string previousName = null;
+            bool previousIsVideo = false;
+            bool hasPreviousName = false;
             var previousChoice = (CmbMasterTrack.SelectedItem as ComboBoxItem)?.Tag as MasterChoice;
             if (previousChoice != null)
             {
                 previousTrackId = previousChoice.TrackId;
+                previousName = previousChoice.Name;
+                previousIsVideo = previousChoice.IsVideo;
+                hasPreviousName = !string.IsNullOrEmpty(previousName);
             }
             else if (restoreSavedMaster && _settings != null)
             {
                 // First population of this session: restore the saved master anchor.
                 previousTrackId = _settings.MasterTrackId;
+                previousName = _settings.MasterTrackName;
+                previousIsVideo = _settings.MasterTrackIsVideo;
+                hasPreviousName = !string.IsNullOrEmpty(previousName);
             }
 
             CmbMasterTrack.Items.Clear();
@@ -624,6 +699,9 @@ namespace VegasAudioSync.UI
             };
             CmbMasterTrack.Items.Add(autoItem);
             CmbMasterTrack.SelectedItem = autoItem;
+
+            ComboBoxItem exactMatch = null;
+            ComboBoxItem nameFallbackMatch = null;
 
             foreach (Track track in _vegas.Project.Tracks)
             {
@@ -677,10 +755,28 @@ namespace VegasAudioSync.UI
 
                 if (previousTrackId != null
                     && previousTrackId == choice.TrackId
-                    && (!restoreSavedMaster || MatchesSavedMaster(choice)))
+                    && (!hasPreviousName
+                        || (string.Equals(previousName, choice.Name, StringComparison.Ordinal)
+                            && previousIsVideo == choice.IsVideo)))
                 {
-                    CmbMasterTrack.SelectedItem = item;
+                    exactMatch = item;
                 }
+                else if (nameFallbackMatch == null
+                    && hasPreviousName
+                    && string.Equals(previousName, choice.Name, StringComparison.Ordinal)
+                    && previousIsVideo == choice.IsVideo)
+                {
+                    nameFallbackMatch = item;
+                }
+            }
+
+            if (exactMatch != null)
+            {
+                CmbMasterTrack.SelectedItem = exactMatch;
+            }
+            else if (nameFallbackMatch != null)
+            {
+                CmbMasterTrack.SelectedItem = nameFallbackMatch;
             }
         }
 
@@ -751,7 +847,12 @@ namespace VegasAudioSync.UI
                 ChkSubSample.IsChecked = subSample;
                 ChkVoiceActivity.IsChecked = voiceActivity;
                 if (resetSelectedOnly) ChkSelectedOnly.IsChecked = false;
-                if (resetGlobalMatching) ChkGlobalMatching.IsChecked = true;
+                if (resetGlobalMatching)
+                {
+                    ChkGlobalMatching.IsChecked = true;
+                    SelectComboByTag(CmbTimeSource, "auto");
+                    SelectComboByTag(CmbClipOrder, "auto");
+                }
                 CmbMasterTrack.SelectedIndex = 0; // Auto (recommended)
             }
             finally
@@ -760,6 +861,7 @@ namespace VegasAudioSync.UI
                 _suppressSettingsSave = false;
             }
 
+            UpdateClockControlsState();
             SaveSettings();
             AppendLog("Preset: " + label);
             SetStatus("Preset applied: " + label, StatusReadyColor);
@@ -770,7 +872,7 @@ namespace VegasAudioSync.UI
         /// recorder tracks. The scan is read-only; only an Apply in the preview dialog
         /// changes the timeline, and that pass is one undo step.
         /// </summary>
-        private void BtnOrganizeDevices_Click(object sender, RoutedEventArgs e)
+        private async void BtnOrganizeDevices_Click(object sender, RoutedEventArgs e)
         {
             if (_vegas == null || _vegas.Project == null)
             {
@@ -785,20 +887,33 @@ namespace VegasAudioSync.UI
                 return;
             }
 
-            string ffprobe = DeviceOrganizer.FindFfprobe(_cachedFfmpegPath);
-
+            _cancelRequested = false;
+            int scanGeneration = _projectGeneration;
             _syncInProgress = true;
             BtnOrganizeDevices.IsEnabled = false;
             BtnSync.IsEnabled = false;
             BtnRefresh.IsEnabled = false;
+            BtnCancel.IsEnabled = true;
             SetStatus("Scanning project media…", StatusReadyColor);
             ResultSummaryCard.Visibility = Visibility.Collapsed;
             TxtResultSummary.Text = string.Empty;
 
             try
             {
-                // VEGAS COM must be read on the UI thread.
-                DeviceScanResult scan = DeviceOrganizer.Scan(_vegas, ffprobe, msg => AppendLog(msg));
+                // Fast COM snapshot on the VEGAS UI thread (no external processes).
+                DeviceOrganizer.TimelineSnapshot snapshot = DeviceOrganizer.CaptureTimelineEvents(_vegas);
+
+                // Probe unique media files off the UI thread so VEGAS stays responsive.
+                string ffprobe = await Task.Run(() => DeviceOrganizer.FindFfprobe(_cachedFfmpegPath));
+                DeviceScanResult scan = await Task.Run(() =>
+                    DeviceOrganizer.BuildScanResult(
+                        snapshot,
+                        ffprobe,
+                        msg => AppendLog(msg),
+                        () => _cancelRequested));
+
+                ThrowIfProjectChanged(scanGeneration);
+                BtnCancel.IsEnabled = false;
 
                 if (scan == null || scan.Groups == null || scan.Groups.Count == 0)
                 {
@@ -820,6 +935,7 @@ namespace VegasAudioSync.UI
                     return;
                 }
 
+                ThrowIfProjectChanged(scanGeneration);
                 DeviceScanResult plan = dialog.Result;
                 DeviceApplyResult result;
 
@@ -849,6 +965,18 @@ namespace VegasAudioSync.UI
                 // Apply may have created camera/recorder tracks; show them now.
                 RefreshTimelineTracks();
             }
+            catch (ProjectChangedException)
+            {
+                ResultSummaryCard.Visibility = Visibility.Collapsed;
+                SetStatus("Project changed; scan discarded.", StatusWarningColor);
+                AppendLog("Project changed during device scan; no timeline changes were applied.");
+            }
+            catch (OperationCanceledException)
+            {
+                ResultSummaryCard.Visibility = Visibility.Collapsed;
+                SetStatus("Device scan cancelled.", StatusReadyColor);
+                AppendLog("Device scan cancelled by user.");
+            }
             catch (Exception ex)
             {
                 ResultSummaryCard.Visibility = Visibility.Collapsed;
@@ -861,6 +989,8 @@ namespace VegasAudioSync.UI
                 BtnSync.IsEnabled = _engineAvailable;
                 BtnRefresh.IsEnabled = true;
                 BtnOrganizeDevices.IsEnabled = true;
+                BtnCancel.IsEnabled = false;
+                _cancelRequested = false;
             }
         }
 
@@ -1118,14 +1248,15 @@ namespace VegasAudioSync.UI
                 }
                 string ffmpegBin = _cachedFfmpegPath;
 
-                // Extract timeline tracks with real-time UI logging
+                // Fast COM extraction on the UI thread (no synchronous ffprobe spawns).
                 SyncTaskRequest request = TimelineExtractor.ExtractFromVegas(
                     _vegas,
                     selectedOnly,
                     includeVideo,
                     msg => AppendLog(msg),
                     masterChoice?.TrackId,
-                    _cachedFfmpegPath);
+                    ffmpegBin,
+                    skipFfprobe: true);
 
                 if (request.Tracks.Count == 0)
                 {
@@ -1133,6 +1264,15 @@ namespace VegasAudioSync.UI
                     SetStatus("No events found.", StatusWarningColor);
                     return;
                 }
+
+                // Probe container timecode & creation_time off the UI thread so VEGAS stays responsive.
+                SetStatus("Probing media metadata...", StatusReadyColor);
+                await Task.Run(() => TimelineExtractor.EnrichMetadataInBackground(
+                    request,
+                    ffmpegBin,
+                    msg => AppendLog(msg),
+                    () => _cancelRequested));
+                ThrowIfProjectChanged(analysisGeneration);
 
                 // Apply UI options
                 request.Options.FfmpegPath = ffmpegBin;

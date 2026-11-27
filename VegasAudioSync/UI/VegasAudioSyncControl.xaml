@@ -230,10 +230,10 @@
                         </UniformGrid>
 
                         <!-- Organize by Device -->
-                        <Button x:Name="BtnOrganizeDevices" Content="Organize Tracks by Device…" Height="30" FontSize="11"
+                        <Button x:Name="BtnOrganizeDevices" Content="Organize Tracks by Device/Folder…" Height="30" FontSize="11"
                                 HorizontalAlignment="Stretch" Margin="0,0,0,12"
                                 Style="{StaticResource ModernSecondaryButton}" Click="BtnOrganizeDevices_Click"
-                                ToolTip="Scan timeline media, group clips by recording device, and build one video track per camera or one audio track per recorder. Nothing changes until you confirm the preview."/>
+                                ToolTip="Scan timeline media, group clips by recording device or media folder, and build one video track per camera or one audio track per recorder. Nothing changes until you confirm the preview."/>
 
                         <!-- What to sync -->
                         <TextBlock Text="WHAT TO SYNC" FontSize="11" FontWeight="Bold" Foreground="#A7AEC2" Margin="0,0,0,4"/>

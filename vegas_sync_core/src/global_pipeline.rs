@@ -946,10 +946,75 @@ pub(crate) fn build_results(
         }
     }
 
+    // Pick one anchor per audio component (user pin if in that component,
+    // otherwise the longest clip) and compute relative drift along a max-weight
+    // spanning tree of audio edges. That keeps the anchor at 1.0 and gives
+    // opposite signs to opposite ends of an edge instead of stretching both
+    // clips in the same direction.
+    let mut component_anchor: HashMap<usize, usize> = HashMap::new();
+    for index in 0..n {
+        if !solved.component_has_audio.get(index).copied().unwrap_or(false) {
+            continue;
+        }
+        let comp = solved.component.get(index).copied().unwrap_or(0);
+        if plan.pin == Some(index) {
+            component_anchor.insert(comp, index);
+            continue;
+        }
+        let replace = match component_anchor.get(&comp).copied() {
+            None => true,
+            Some(existing) if plan.pin == Some(existing) => false,
+            Some(existing) => {
+                events[index].timeline_length_seconds > events[existing].timeline_length_seconds
+            }
+        };
+        if replace {
+            component_anchor.insert(comp, index);
+        }
+    }
+
+    let mut adjacency: Vec<Vec<(usize, f64, f64)>> = vec![Vec::new(); n];
+    for edge in &plan.audio {
+        if edge.from >= n || edge.to >= n || edge.from == edge.to {
+            continue;
+        }
+        let w = edge.weight();
+        let d = if edge.drift_ppm.is_finite() { edge.drift_ppm } else { 0.0 };
+        adjacency[edge.from].push((edge.to, d, w));
+        adjacency[edge.to].push((edge.from, -d, w));
+    }
+    for neighbors in &mut adjacency {
+        neighbors.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
+    }
+
+    let mut node_drift: Vec<f64> = vec![0.0; n];
+    let mut visited_drift: Vec<bool> = vec![false; n];
+    if detect_drift {
+        let mut anchors: Vec<usize> = component_anchor.values().copied().collect();
+        anchors.sort_unstable();
+        for anchor in anchors {
+            let mut queue = std::collections::VecDeque::new();
+            visited_drift[anchor] = true;
+            node_drift[anchor] = 0.0;
+            queue.push_back(anchor);
+            while let Some(u) = queue.pop_front() {
+                let base_drift = node_drift[u];
+                for &(v, edge_drift, _) in &adjacency[u] {
+                    if !visited_drift[v] {
+                        visited_drift[v] = true;
+                        node_drift[v] = base_drift + edge_drift;
+                        queue.push_back(v);
+                    }
+                }
+            }
+        }
+    }
+
+    let anchor_set: HashSet<usize> = component_anchor.values().copied().collect();
+
     // Nodes connected to an audio component only through sequence edges share
     // the component's best confidence instead of reporting 0.
     let mut component_confidence: Vec<Option<f64>> = vec![None; n];
-    let mut component_drift: Vec<f64> = vec![0.0; n];
     for edge in &plan.audio {
         let component = solved.component.get(edge.to).copied().unwrap_or(0);
         if component >= n {
@@ -960,7 +1025,6 @@ pub(crate) fn build_results(
             .unwrap_or(true);
         if better {
             component_confidence[component] = Some(edge.confidence);
-            component_drift[component] = edge.drift_ppm;
         }
     }
 
@@ -1019,9 +1083,44 @@ pub(crate) fn build_results(
             .unwrap_or(false);
 
         let incoming = best_incoming[index];
-        let split_points: Vec<SplitPoint> = incoming
-            .map(|edge| edge.split_points.clone())
-            .unwrap_or_default();
+        let split_points: Vec<SplitPoint> = if anchor_set.contains(&index) {
+            Vec::new()
+        } else if let Some(edge) = incoming.filter(|e| !e.split_points.is_empty()) {
+            edge.split_points.clone()
+        } else {
+            // If this non-anchor node only appears as `edge.from` against an anchor
+            // `edge.to`, remap the edge's detected discontinuities into `from`'s
+            // pre-move timeline coordinates with negated step jumps.
+            plan.audio
+                .iter()
+                .find(|edge| {
+                    edge.from == index
+                        && anchor_set.contains(&edge.to)
+                        && !edge.split_points.is_empty()
+                })
+                .map(|edge| {
+                    let orig_to = events[edge.to].timeline_start_seconds;
+                    let solved_to = solved.positions.get(edge.to).copied().unwrap_or(orig_to);
+                    let solved_from = solved.positions.get(index).copied().unwrap_or(original);
+                    let from_end = original + events[index].timeline_length_seconds;
+                    edge.split_points
+                        .iter()
+                        .filter_map(|sp| {
+                            let t_solved = solved_to + (sp.timestamp_seconds - orig_to);
+                            let t_from = original + (t_solved - solved_from);
+                            if t_from.is_finite() && t_from > original && t_from < from_end {
+                                Some(SplitPoint {
+                                    timestamp_seconds: t_from,
+                                    step_jump_seconds: -sp.step_jump_seconds,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
         let split_points_seconds: Vec<f64> =
             split_points.iter().map(|sp| sp.timestamp_seconds).collect();
 
@@ -1032,10 +1131,8 @@ pub(crate) fn build_results(
                 .map(|edge| edge.confidence)
                 .or_else(|| component_confidence.get(component).copied().flatten())
                 .unwrap_or(0.0);
-            let drift = if detect_drift {
-                incident
-                    .map(|edge| edge.drift_ppm)
-                    .unwrap_or_else(|| component_drift.get(component).copied().unwrap_or(0.0))
+            let drift = if detect_drift && visited_drift[index] {
+                node_drift[index]
             } else {
                 0.0
             };
@@ -2448,5 +2545,36 @@ mod tests {
         assert_eq!(first.constraints, second.constraints);
         assert_eq!(first.audio_edges, second.audio_edges);
         assert_eq!(first.nodes, second.nodes);
+    }
+
+    #[test]
+    fn build_results_anchors_drift_and_remaps_reverse_splits() {
+        // Index 0 is a shorter VFR phone clip; index 1 is the long continuous
+        // recorder (component anchor). Because 0 < 1, the edge is 0 -> 1.
+        let events = vec![
+            event("phone", 10.0, 60.0, Some("phone"), "normal"),
+            event("recorder", 0.0, 600.0, Some("rec"), "normal"),
+        ];
+        let infos = vec![TimeInfo::NONE; 2];
+        let mut edge = audio(0, 1, -5.0, 0.9, 0.9);
+        edge.drift_ppm = 40.0;
+        edge.split_points = vec![SplitPoint {
+            timestamp_seconds: 25.0,
+            step_jump_seconds: 0.2,
+        }];
+        let mut plan = build_plan(&events, &infos, &[edge], None, "auto", &mut Vec::new());
+        let solved = solve_positions(&events, &mut plan);
+        let (results, _) = build_results(&events, &infos, &solved, &plan, true);
+
+        // Recorder (anchor) stays at 0.0 PPM / 1.0 rate and gets no splits.
+        approx(results[1].drift_ppm, 0.0, 1e-9);
+        approx(results[1].playback_rate, 1.0, 1e-9);
+        assert!(results[1].split_points.is_empty());
+
+        // Phone gets negated relative drift (-40 PPM) and remapped split point
+        // with negated step jump.
+        approx(results[0].drift_ppm, -40.0, 1e-9);
+        assert_eq!(results[0].split_points.len(), 1);
+        approx(results[0].split_points[0].step_jump_seconds, -0.2, 1e-9);
     }
 }

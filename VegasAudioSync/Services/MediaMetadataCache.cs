@@ -96,11 +96,16 @@ namespace VegasAudioSync.Services
                 long mtime = info.LastWriteTimeUtc.Ticks;
                 string cacheKey = NormalizePath(fullPath);
 
+                CacheEntry entry = null;
+                bool needsProbe = false;
+                string probeKey = cacheKey + "|"
+                    + size.ToString(CultureInfo.InvariantCulture) + "|"
+                    + mtime.ToString(CultureInfo.InvariantCulture);
+
                 lock (SyncRoot)
                 {
                     EnsureLoadedLocked();
 
-                    CacheEntry entry;
                     bool valid = _cache.TryGetValue(cacheKey, out entry)
                         && entry != null
                         && entry.Size == size
@@ -110,34 +115,37 @@ namespace VegasAudioSync.Services
                     {
                         entry = null;
                         if (_cache.Remove(cacheKey)) _dirty = true;
+                        needsProbe = !FailedProbes.Contains(probeKey);
+                    }
+                }
 
-                        string probeKey = cacheKey + "|"
-                            + size.ToString(CultureInfo.InvariantCulture) + "|"
-                            + mtime.ToString(CultureInfo.InvariantCulture);
-
-                        if (!FailedProbes.Contains(probeKey))
+                // Run ffprobe outside SyncRoot so background workers can probe
+                // different media files concurrently without serializing on the lock.
+                if (needsProbe)
+                {
+                    CacheEntry probed = Probe(fullPath, ffprobePath);
+                    lock (SyncRoot)
+                    {
+                        if (probed != null)
                         {
-                            entry = Probe(fullPath, ffprobePath);
-                            if (entry != null)
-                            {
-                                entry.Path = fullPath;
-                                entry.Size = size;
-                                entry.Mtime = mtime;
-                                _cache[cacheKey] = entry;
-                                _dirty = true;   // flushed once at the end of extraction
-                            }
-                            else
-                            {
-                                FailedProbes.Add(probeKey);
-                            }
+                            probed.Path = fullPath;
+                            probed.Size = size;
+                            probed.Mtime = mtime;
+                            _cache[cacheKey] = probed;
+                            _dirty = true;   // flushed once at the end of extraction
+                            entry = probed;
+                        }
+                        else
+                        {
+                            FailedProbes.Add(probeKey);
                         }
                     }
+                }
 
-                    if (entry != null)
-                    {
-                        metadata.TimecodeSeconds = Sanitize(entry.TimecodeSeconds);
-                        metadata.CreationTimeSeconds = Sanitize(entry.CreationTimeSeconds);
-                    }
+                if (entry != null)
+                {
+                    metadata.TimecodeSeconds = Sanitize(entry.TimecodeSeconds);
+                    metadata.CreationTimeSeconds = Sanitize(entry.CreationTimeSeconds);
                 }
             }
             catch
@@ -354,13 +362,20 @@ namespace VegasAudioSync.Services
         private static string ResolveFfprobe(string ffprobePathOrFfmpeg)
         {
             string argument = ffprobePathOrFfmpeg ?? string.Empty;
-            if (_probeResolved && string.Equals(_probeArgument, argument, StringComparison.OrdinalIgnoreCase))
-                return _probePath;
+            lock (SyncRoot)
+            {
+                if (_probeResolved && string.Equals(_probeArgument, argument, StringComparison.OrdinalIgnoreCase))
+                    return _probePath;
+            }
 
-            _probeArgument = argument;
-            _probePath = DeviceOrganizer.FindFfprobe(argument);
-            _probeResolved = true;
-            return _probePath;
+            string resolved = DeviceOrganizer.FindFfprobe(argument);
+            lock (SyncRoot)
+            {
+                _probeArgument = argument;
+                _probePath = resolved;
+                _probeResolved = true;
+                return _probePath;
+            }
         }
 
         private static CacheEntry Probe(string path, string ffprobePathOrFfmpeg)

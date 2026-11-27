@@ -244,7 +244,7 @@
 
             <StackPanel Grid.Column="0">
                 <TextBlock Text="ORGANIZE TRACKS BY DEVICE" FontSize="15" FontWeight="Bold" Foreground="{StaticResource TextBright}"/>
-                <TextBlock Text="One video track per camera, one audio track per recorder. Review inclusion and names before applying."
+                <TextBlock Text="Paired video + audio tracks per camera, one audio track per recorder. Review inclusion and names before applying."
                            FontSize="11" Foreground="{StaticResource TextMuted}" Margin="0,3,0,0" TextWrapping="Wrap"/>
             </StackPanel>
 
