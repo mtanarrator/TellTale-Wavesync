@@ -469,6 +469,7 @@ mod tests {
             timecode_seconds: None,
             filename_time_seconds: None,
             file_time_seconds: None,
+            file_created_time_seconds: None,
             sync_role: "normal".to_string(),
             playback_rate: 1.0,
         }

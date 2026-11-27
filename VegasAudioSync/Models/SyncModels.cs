@@ -165,6 +165,15 @@ namespace VegasAudioSync.Models
         }
         private double? _fileTimeSeconds;
 
+        /// <summary>Epoch seconds of FileInfo.CreationTimeUtc (recorder start).</summary>
+        [DataMember(Name = "file_created_time_seconds", EmitDefaultValue = false)]
+        public double? FileCreatedTimeSeconds
+        {
+            get { return _fileCreatedTimeSeconds; }
+            set { _fileCreatedTimeSeconds = SanitizeSeconds(value); }
+        }
+        private double? _fileCreatedTimeSeconds;
+
         /// <summary>normal for regular clips, broll for clips shorter than the b-roll threshold.</summary>
         [DataMember(Name = "sync_role")]
         public string SyncRole { get; set; } = "normal";

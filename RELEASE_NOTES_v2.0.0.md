@@ -45,6 +45,8 @@ A device clock that is more than **30 days** away from the project median is tre
 
 Container timecode is handled as seconds-of-day rather than a date, and is unwrapped across midnight so a run that crosses 23:59 does not jump backwards.
 
+Recorder clocks can also be *compressed* rather than simply wrong: 137 minutes of takes stamped inside a 9-minute span. When that happens the engine keeps the device's current timeline spacing instead of squeezing the takes together. And if a solved placement would make a device's own clips overlap heavily, that device is left at its original position and the run log names the refusal. Camera sync is preserved; an ambiguous recorder block is never scattered.
+
 ### B-roll and unsynced clips are labelled honestly
 
 - Clips without an audio edge are placed from their clock/order when that evidence exists and marked **`clock-placed`** in the manifest and run log.
@@ -64,7 +66,7 @@ The organizer and the sync engine now share one device-identity rule:
 
 ### Tests and rollback
 
-The v2 work was validated against synthetic global chains (A↔B↔C where A and C share no direct edge), sparse-fallback decisions, untrusted-clock selection, B-roll anchoring, and a legacy-parity check with global matching off. Rust tests now cover 111 cases. The pre-v2 build was archived before the change as `Backups\WaveSync_legacy_20261127_123741.zip`.
+The v2 work was validated against synthetic global chains (A↔B↔C where A and C share no direct edge), sparse-fallback decisions, untrusted-clock selection, compressed-clock guards, B-roll anchoring, and a legacy-parity check with global matching off. Rust tests now cover 117 cases. The pre-v2 build was archived before the change as `Backups\WaveSync_legacy_20261127_123741.zip`.
 
 ---
 
@@ -87,18 +89,20 @@ The v2 work was validated against synthetic global chains (A↔B↔C where A and
 - **Duplicate audio from older builds is not removed automatically.** Clean up duplicate camera-audio or recorder tracks created by earlier versions before organizing and syncing.
 - **B-roll classification is informational.** The 15-second threshold can label a genuinely short normal clip as B-roll; it does not change which track the clip belongs to.
 - **Clock-placed clips should be reviewed.** They are not audio-verified, and the log says so.
+- **Impossible or destructive device layouts are refused.** If a device's timestamps are physically impossible, v2 keeps its current timeline spacing. If placing a device would overlap its own clips heavily, v2 leaves that device at its original position and reports it as unaligned. This is deliberate: camera sync is preserved and the recorder block is never scattered into dozens of lanes.
 
 ---
 
 ## What to test
 
-Use the **Regression Case** fixture — 112 timeline events over 66 unique media files:
+Use the **Regression Case** fixture — 112 timeline events over 66 unique media files (46 grouped camera A/V primaries + 20 recorder WAVs):
 
 1. **Organization:** scanning reports four groups — `CAM 1 — Sony A7 III (V)`, `CAM 2 — Sony FX3 (V)`, `REC 1 — Tascam_wesele (audio1)`, `REC 2 — Tascam_wesele (audio2)`.
 2. **Untrusted clock:** the A7 III's 2018 container date produces an untrusted-clock warning that names **Sony A7 III**, and its epoch is not used for sequence offsets.
 3. **B-roll:** 17 short clips (under 15 s) are counted as B-roll; no normal 15 s+ clip is misclassified.
 4. **Dual recorders:** the two Tascam folders stay separate, each receives its own audio track, and no audio is duplicated or muted.
-5. **Global run:** a default run completes and the summary/log contains `Path: Global matching` with counts where audio-aligned + clock-placed + unaligned = 112.
+5. **Global run:** a default run completes and the summary/log contains `Path: Global matching` with counts where audio-aligned + clock-placed + unaligned = 66 analyzed primaries (112 events with grouped companions).
+6. **Recorder guard:** because the Tascam filenames fit 137 minutes of media into 9 minutes, the log warns that timeline spacing is kept; any recorder block that would overlap is left at its original position, reported as unaligned, with **no new sync lanes**.
 6. **Legacy baseline:** a copy of the project with Global matching **off** logs `Path: Legacy master anchor` and completes coherently; compare moved/unaligned counts and clip-level differences.
 7. **Fallback:** a 1–2 clip project or an ambiguous subset logs the global fallback warning and completes through the legacy path.
 8. **Persistence:** the toggle and both clocks survive closing/reopening VEGAS; deleting `settings.json` returns to global on / Auto / Auto; a saved `global_matching: false` stays off.

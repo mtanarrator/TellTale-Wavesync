@@ -137,6 +137,7 @@ Run **Organize Tracks by Device** first, then **Sync**. Keep Global matching on 
 - **Cross-device unsynced clips are not guaranteed sub-second.** When two devices share no usable audio, placement depends on clocks and order. Sample-accurate sync is only claimed where audio actually overlaps.
 - **Global mode falls back automatically** when there are more than 400 unique media paths, roughly 512 MB of retained audio, fewer than two analyzable events, or a sparse/sequence-only audio graph. The run log says which path ran.
 - **Duplicate audio from older builds should be cleaned up manually.** v2 does not create camera-audio or duplicate recorder tracks, but it does not delete tracks that earlier versions already added.
+- **Impossible device clocks and destructive placements are refused.** If a device's timestamps pack more media into their span than the files can physically contain (for example 137 minutes of recorder takes stamped inside 9 minutes), v2 keeps that device's existing timeline spacing instead of compressing it. If a solved placement would make a device's own clips overlap heavily, that device is left at its original position and the log says so. Those clips are reported as unaligned rather than moved into a guessing layout.
 
 ---
 
@@ -190,7 +191,7 @@ wix build Installer\TellTaleWaveSync.wxs -arch x64 -ext WixToolset.UI.wixext -o 
 
 ```powershell
 cd vegas_sync_core
-cargo test                      # 113 tests: global graph/fallback, clocks, long-take, source-clock, preserve-order
+cargo test                      # 117 tests: global graph/fallback, clocks, long-take, source-clock, preserve-order
 
 cd ..
 dotnet build TestHarness\TestHarness.csproj -c Release

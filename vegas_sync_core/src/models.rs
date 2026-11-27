@@ -129,6 +129,11 @@ pub struct EventDescriptor {
     /// Epoch seconds from the media file's last-write time (`LastWriteTimeUtc`).
     #[serde(default)]
     pub file_time_seconds: Option<f64>,
+    /// Epoch seconds from the file system creation time (`CreationTimeUtc`).
+    /// Recorder WAVs often stamp their real start here when container metadata
+    /// and filename timestamps are missing or wrong.
+    #[serde(default)]
+    pub file_created_time_seconds: Option<f64>,
     /// Semantic role of the clip: `normal | broll`.
     #[serde(default = "default_sync_role")]
     pub sync_role: String,
@@ -160,6 +165,7 @@ impl Default for EventDescriptor {
             timecode_seconds: None,
             filename_time_seconds: None,
             file_time_seconds: None,
+            file_created_time_seconds: None,
             sync_role: default_sync_role(),
             playback_rate: default_playback_rate(),
         }

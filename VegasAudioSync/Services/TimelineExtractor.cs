@@ -286,19 +286,29 @@ namespace VegasAudioSync.Services
                     double? filenameTimeSeconds = mediaMetadata != null ? mediaMetadata.FilenameTimeSeconds : null;
 
                     double? fileTimeSeconds = null;
+                    double? fileCreatedTimeSeconds = null;
                     try
                     {
-                        DateTime lastWriteUtc = new FileInfo(resolvedPath).LastWriteTimeUtc;
+                        var info = new FileInfo(resolvedPath);
+                        DateTime lastWriteUtc = info.LastWriteTimeUtc;
                         fileTimeSeconds = (lastWriteUtc
                             - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
                         if (double.IsNaN(fileTimeSeconds.Value) || double.IsInfinity(fileTimeSeconds.Value))
                         {
                             fileTimeSeconds = null;
                         }
+                        DateTime createdUtc = info.CreationTimeUtc;
+                        fileCreatedTimeSeconds = (createdUtc
+                            - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+                        if (double.IsNaN(fileCreatedTimeSeconds.Value) || double.IsInfinity(fileCreatedTimeSeconds.Value))
+                        {
+                            fileCreatedTimeSeconds = null;
+                        }
                     }
                     catch
                     {
                         fileTimeSeconds = null;
+                        fileCreatedTimeSeconds = null;
                     }
 
                     double? recordedTime = null;
@@ -358,6 +368,7 @@ namespace VegasAudioSync.Services
                         TimecodeSeconds = timecodeSeconds,
                         FilenameTimeSeconds = filenameTimeSeconds,
                         FileTimeSeconds = fileTimeSeconds,
+                        FileCreatedTimeSeconds = fileCreatedTimeSeconds,
                         // TODO(Milestone B): SyncOptions.BrollMaxSeconds will own this
                         // threshold; keep the 15 s default for Milestone A.
                         SyncRole = lenSec < 15.0 ? "broll" : "normal"

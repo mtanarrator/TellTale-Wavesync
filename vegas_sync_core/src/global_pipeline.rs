@@ -83,6 +83,10 @@ const PRESCAN_PER_EVENT: usize = 16;
 /// Number of longest takes reserved as candidate hubs for every event.
 const HUB_SLOTS: usize = 2;
 
+/// One longest take per device is bridged unconditionally so a device whose
+/// timeline and clock sit outside every other device can still link by audio.
+const SOURCE_BRIDGE_SLOTS: usize = 8;
+
 /// Current timeline spans closer than this are temporally plausible.
 const TIMELINE_WINDOW_SECONDS: f64 = 5.0 * 60.0;
 
@@ -173,6 +177,59 @@ pub(crate) struct Plan {
 fn is_broll(ev: &EventDescriptor) -> bool {
     ev.sync_role.eq_ignore_ascii_case("broll")
 }
+
+/// Optional diagnostic dump of the planned graph (`WAVESYNC_DEBUG_EDGES=<path>`).
+/// Enabled only for field debugging; it has no effect on the solve.
+fn debug_dump_plan(events: &[EventDescriptor], infos: &[TimeInfo], plan: &Plan) {
+    let Ok(path) = std::env::var("WAVESYNC_DEBUG_EDGES") else {
+        return;
+    };
+    if path.trim().is_empty() {
+        return;
+    }
+    let mut out = String::new();
+    out.push_str(&format!("EVENTS\t{}\n", events.len()));
+    for (index, event) in events.iter().enumerate() {
+        let info = infos.get(index).copied().unwrap_or(TimeInfo::NONE);
+        out.push_str(&format!(
+            "EV\t{}\t{}\t{}\t{:.3}\t{:.3}\t{:.3}\t{}\t{}\t{}\n",
+            index,
+            event.event_id,
+            event.source_key.as_deref().unwrap_or(""),
+            event.timeline_start_seconds,
+            event.timeline_length_seconds,
+            event.media_start_seconds,
+            info.order_source,
+            info.epoch_source,
+            info.trusted
+        ));
+    }
+    out.push_str(&format!("AUDIO\t{}\n", plan.audio.len()));
+    for edge in &plan.audio {
+        out.push_str(&format!(
+            "A\t{}\t{}\t{:.3}\t{:.3}\t{:.3}\t{:.3}\n",
+            edge.from,
+            edge.to,
+            edge.offset_seconds,
+            edge.confidence,
+            edge.ncc,
+            edge.weight()
+        ));
+    }
+    out.push_str(&format!("CONSTRAINTS\t{}\n", plan.constraints.len()));
+    for constraint in &plan.constraints {
+        out.push_str(&format!(
+            "C\t{}\t{}\t{:.3}\t{:.3}\t{:?}\n",
+            constraint.from,
+            constraint.to,
+            constraint.offset_seconds,
+            constraint.weight,
+            constraint.kind
+        ));
+    }
+    let _ = std::fs::write(path.trim(), out);
+}
+
 
 fn normalized_path(path: &str) -> String {
     normalize_path(path).to_lowercase()
@@ -632,13 +689,17 @@ fn unwrap_timecode_pairs(pairs: &[(usize, f64)]) -> Vec<(usize, f64)> {
         .collect()
 }
 
-/// One entry per event: `(index, ordering value, basis label)`.
+/// One event in a device ordering: `(index, order value, basis label)`.
+type OrderEntry = (usize, f64, &'static str);
+
+/// One entry per event: `(index, ordering value, basis label)` plus an
+/// implausible-clock indicator `(order span seconds, total media seconds)`.
 fn order_group(
     events: &[EventDescriptor],
     infos: &[TimeInfo],
     mode: SequenceMode,
     members: &[usize],
-) -> Vec<(usize, f64, &'static str)> {
+) -> (Vec<OrderEntry>, Option<(f64, f64)>) {
     let mut entries: Vec<(usize, f64, &'static str)> = Vec::with_capacity(members.len());
 
     for &index in members {
@@ -692,7 +753,49 @@ fn order_group(
             .unwrap_or(Ordering::Equal)
             .then_with(|| a.0.cmp(&b.0))
     });
-    entries
+
+    // A device clock that packs more media into its span than the clips could
+    // physically contain is not a usable ordering signal (for example recorder
+    // filenames that repeat the same minute for every take). Keep the current
+    // timeline spacing instead of compressing the clips together.
+    let compressed = if mode == SequenceMode::Auto {
+        compression_factor(&entries, events)
+    } else {
+        None
+    };
+
+    (entries, compressed)
+}
+
+fn compression_factor(
+    entries: &[(usize, f64, &'static str)],
+    events: &[EventDescriptor],
+) -> Option<(f64, f64)> {
+    if entries.len() < 3 || entries[0].2 == "timeline" {
+        return None;
+    }
+    if !entries.iter().all(|entry| entry.2 == entries[0].2) {
+        return None;
+    }
+    let span = (entries[entries.len() - 1].1 - entries[0].1).abs();
+    let total: f64 = entries
+        .iter()
+        .map(|entry| clip_length(&events[entry.0]))
+        .sum();
+    if span.is_finite() && total > 0.0 && span + 120.0 < total / 1.5 {
+        Some((span, total))
+    } else {
+        None
+    }
+}
+
+fn clip_length(event: &EventDescriptor) -> f64 {
+    let media = if event.media_length_seconds.is_finite() {
+        event.media_length_seconds / playback_rate_or_one(event)
+    } else {
+        0.0
+    };
+    event.timeline_length_seconds.max(media).max(0.0)
 }
 
 /// Builds consecutive same-source links according to the clip-order policy.
@@ -729,7 +832,15 @@ fn sequence_links(
             Some(members) => members,
             None => continue,
         };
-        let ordered = order_group(events, infos, mode, members);
+        let (ordered, compressed) = order_group(events, infos, mode, members);
+        if let Some((span, total)) = compressed {
+            warnings.push(format!(
+                "Global matching: clip timestamps for '{}' fit {:.0} min of media into {:.0} min; keeping the current timeline spacing for ordering.",
+                display_source(key),
+                total / 60.0,
+                span / 60.0
+            ));
+        }
 
         // Collapse duplicate camera-audio events (same media path/stream/start)
         // to one representative so 0 s, weight-3 sequence edges cannot stack.
@@ -757,31 +868,34 @@ fn sequence_links(
             let mut offset = timeline_offset;
             let mut weight = SEQUENCE_UNTRUSTED_WEIGHT;
 
-            let same_basis = from_basis == to_basis && from_basis != "timeline";
-            let order_allowed = same_basis
-                && (from_basis == "timecode"
-                    || (infos.get(from).map(|i| i.trusted).unwrap_or(false)
-                        && infos.get(to).map(|i| i.trusted).unwrap_or(false)));
+            if compressed.is_none() {
+                let same_basis = from_basis == to_basis && from_basis != "timeline";
+                let order_allowed = same_basis
+                    && (from_basis == "timecode"
+                        || (infos.get(from).map(|i| i.trusted).unwrap_or(false)
+                            && infos.get(to).map(|i| i.trusted).unwrap_or(false)));
 
-            if order_allowed {
-                // Order values are media timestamps (t0); solver nodes are
-                // event starts, so the trimmed media lead-in must be added.
-                let from_lead =
-                    events[from].media_start_seconds / playback_rate_or_one(&events[from]);
-                let to_lead = events[to].media_start_seconds / playback_rate_or_one(&events[to]);
-                offset = (to_value - from_value) + to_lead - from_lead;
-                weight = SEQUENCE_TRUSTED_WEIGHT;
-            }
+                if order_allowed {
+                    // Order values are media timestamps (t0); solver nodes are
+                    // event starts, so the trimmed media lead-in must be added.
+                    let from_lead =
+                        events[from].media_start_seconds / playback_rate_or_one(&events[from]);
+                    let to_lead =
+                        events[to].media_start_seconds / playback_rate_or_one(&events[to]);
+                    offset = (to_value - from_value) + to_lead - from_lead;
+                    weight = SEQUENCE_TRUSTED_WEIGHT;
+                }
 
-            if offset.abs() > MAX_ABS_SEQUENCE_OFFSET {
-                offset = timeline_offset;
-                weight = SEQUENCE_UNTRUSTED_WEIGHT;
-                if absurd_warnings < 3 {
-                    warnings.push(format!(
-                        "Global matching: implausible {} gap ({:.0}s) between '{}' and '{}'; using the current timeline gap.",
-                        from_basis, to_value - from_value, events[from].event_id, events[to].event_id
-                    ));
-                    absurd_warnings += 1;
+                if offset.abs() > MAX_ABS_SEQUENCE_OFFSET {
+                    offset = timeline_offset;
+                    weight = SEQUENCE_UNTRUSTED_WEIGHT;
+                    if absurd_warnings < 3 {
+                        warnings.push(format!(
+                            "Global matching: implausible {} gap ({:.0}s) between '{}' and '{}'; using the current timeline gap.",
+                            from_basis, to_value - from_value, events[from].event_id, events[to].event_id
+                        ));
+                        absurd_warnings += 1;
+                    }
                 }
             }
 
@@ -982,7 +1096,83 @@ pub(crate) fn build_results(
         });
     }
 
+    // Safety net: a device whose clips would end up overlapping heavily after
+    // placement is not trustworthy. Leave that device exactly where the editor
+    // put it instead of scattering takes across the timeline (and forcing the
+    // host to create dozens of extra lanes).
+    let mut device_groups: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (index, event) in events.iter().enumerate() {
+        if let Some(key) = event.source_key.as_deref() {
+            let key = key.trim();
+            if !key.is_empty() {
+                device_groups.entry(key).or_default().push(index);
+            }
+        }
+    }
+    let resolved_positions: Vec<f64> = results
+        .iter()
+        .map(|result| result.resolved_start_seconds)
+        .collect();
+    let original_positions: Vec<f64> = events
+        .iter()
+        .map(|event| event.timeline_start_seconds)
+        .collect();
+    for members in device_groups.values() {
+        if members.len() < 3 {
+            continue;
+        }
+        let original_bad = bad_overlap_pairs(events, &original_positions, members);
+        let solved_bad = bad_overlap_pairs(events, &resolved_positions, members);
+        if solved_bad < original_bad + 2 || solved_bad * 2 < members.len() {
+            continue;
+        }
+        for &index in members {
+            let original = original_positions[index];
+            if (results[index].resolved_start_seconds - original).abs() <= MOVED_EPSILON {
+                continue;
+            }
+            results[index].resolved_start_seconds = original;
+            results[index].delta_seconds = 0.0;
+            results[index].is_aligned = false;
+            results[index].confidence = 0.0;
+            results[index].playback_rate = 1.0;
+            results[index].drift_ppm = 0.0;
+            results[index].split_points_seconds.clear();
+            results[index].split_points.clear();
+            results[index].notes = Some(
+                "placement would overlap this device's clips; left at the original timeline position"
+                    .to_string(),
+            );
+        }
+    }
+
     (results, shift)
+}
+
+/// Number of consecutive same-device clips whose placed starts overlap by more
+/// than half of the shorter clip.
+fn bad_overlap_pairs(events: &[EventDescriptor], positions: &[f64], members: &[usize]) -> usize {
+    let mut ordered: Vec<usize> = members.to_vec();
+    ordered.sort_by(|&a, &b| {
+        positions[a]
+            .partial_cmp(&positions[b])
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| a.cmp(&b))
+    });
+    let mut bad = 0usize;
+    for window in ordered.windows(2) {
+        let first = window[0];
+        let second = window[1];
+        let overlap = positions[first] + events[first].timeline_length_seconds
+            - positions[second];
+        let shorter = events[first]
+            .timeline_length_seconds
+            .min(events[second].timeline_length_seconds);
+        if overlap > 0.5 * shorter {
+            bad += 1;
+        }
+    }
+    bad
 }
 
 /// `(Some(results), warnings)` on success; `(None, warnings)` requests the
@@ -1044,7 +1234,8 @@ pub(crate) fn run_global(
         .map(|event| normalized_path(&event.file_path))
         .collect();
     let hubs = longest_take_indices(all_events, HUB_SLOTS);
-    let prescan = prescan_pairs(all_events, &infos, &same_source, &hubs, &paths);
+    let bridges = bridge_hubs(all_events);
+    let prescan = prescan_pairs(all_events, &infos, &same_source, &hubs, &bridges, &paths);
 
     if !reporter.report(0.36, "Global matching: scoring candidate pairs...") {
         return Err(CANCELLED.into());
@@ -1084,7 +1275,11 @@ pub(crate) fn run_global(
     for &(from, to, coarse) in &scored {
         let bonus = if same_source.contains(&(from, to)) {
             1.0
-        } else if hubs.contains(&from) || hubs.contains(&to) {
+        } else if hubs.contains(&from)
+            || hubs.contains(&to)
+            || bridges.contains(&from)
+            || bridges.contains(&to)
+        {
             0.5
         } else {
             0.0
@@ -1112,7 +1307,9 @@ pub(crate) fn run_global(
                 break;
             }
             let pair = (index.min(other), index.max(other));
-            if (same_source.contains(&pair) || hubs.contains(&other)) && seen.insert(other) {
+            if (same_source.contains(&pair) || hubs.contains(&other) || bridges.contains(&other))
+                && seen.insert(other)
+            {
                 chosen.push((other, coarse));
             }
         }
@@ -1151,8 +1348,11 @@ pub(crate) fn run_global(
         let outcomes: Vec<AudioEvidence> = chunk
             .par_iter()
             .filter_map(|&(from, to, coarse)| {
-                let forced =
-                    same_source.contains(&(from, to)) || hubs.contains(&from) || hubs.contains(&to);
+                let forced = same_source.contains(&(from, to))
+                    || hubs.contains(&from)
+                    || hubs.contains(&to)
+                    || bridges.contains(&from)
+                    || bridges.contains(&to);
                 if coarse < COARSE_ACCEPT && !forced {
                     return None;
                 }
@@ -1247,6 +1447,7 @@ pub(crate) fn run_global(
         &request.options.clip_order,
         &mut warnings,
     );
+    debug_dump_plan(all_events, &infos, &plan);
     let connected = audio_connected_events(all_events.len(), &plan.constraints);
 
     // Zero audio edges after B-roll/duplicate filtering must never produce a
@@ -1275,6 +1476,15 @@ pub(crate) fn run_global(
         &plan,
         request.options.detect_drift,
     );
+    if results
+        .iter()
+        .any(|result| result.notes.as_deref().unwrap_or("").contains("left at the original timeline position"))
+    {
+        warnings.push(
+            "Global matching: one or more devices would have overlapped heavily after placement; those devices were left at their original timeline positions."
+                .to_string(),
+        );
+    }
 
     // --- Reporting -----------------------------------------------------------------
     let mut audio_components = 0usize;
@@ -1399,6 +1609,34 @@ fn longest_take_indices(events: &[EventDescriptor], limit: usize) -> Vec<usize> 
     order
 }
 
+/// One long representative per device. These pairs are scored even when the
+/// device clocks and timeline positions do not overlap, so a recorder that sits
+/// entirely outside the camera timeline still gets a chance to link by audio.
+fn bridge_hubs(events: &[EventDescriptor]) -> Vec<usize> {
+    let mut best: HashMap<&str, (usize, f64)> = HashMap::new();
+    for (index, event) in events.iter().enumerate() {
+        let key = event.source_key.as_deref().unwrap_or("").trim();
+        if key.is_empty() {
+            continue;
+        }
+        let span = analysis_span(event, false).1;
+        match best.get_mut(key) {
+            Some(slot) => {
+                if span > slot.1 || (span == slot.1 && index < slot.0) {
+                    *slot = (index, span);
+                }
+            }
+            None => {
+                best.insert(key, (index, span));
+            }
+        }
+    }
+    let mut hubs: Vec<usize> = best.into_values().map(|(index, _)| index).collect();
+    hubs.sort_unstable();
+    hubs.truncate(SOURCE_BRIDGE_SLOTS);
+    hubs
+}
+
 fn same_media_duplicate(
     a: &EventDescriptor,
     b: &EventDescriptor,
@@ -1433,6 +1671,7 @@ fn prescan_pairs(
     infos: &[TimeInfo],
     same_source: &HashSet<(usize, usize)>,
     hubs: &[usize],
+    bridges: &[usize],
     paths: &[String],
 ) -> Vec<(usize, usize)> {
     let n = events.len();
@@ -1475,6 +1714,33 @@ fn prescan_pairs(
             let pair = (index.min(other), index.max(other));
             if same_source.contains(&pair) && seen.insert(other) {
                 chosen.push(other);
+            }
+        }
+        // Reserve one long take per other device even when clocks and timeline
+        // positions do not overlap; this is the only bridge for an audio
+        // recorder that sits entirely outside the camera timeline.
+        for &bridge in bridges {
+            if chosen.len() >= PRESCAN_PER_EVENT {
+                break;
+            }
+            if bridge == index || seen.contains(&bridge) {
+                continue;
+            }
+            if events[bridge].source_key == events[index].source_key {
+                continue;
+            }
+            if paths[index].starts_with("mock:")
+                || paths[index].starts_with("test:")
+                || paths[bridge].starts_with("mock:")
+                || paths[bridge].starts_with("test:")
+            {
+                continue;
+            }
+            if same_media_duplicate(&events[index], &events[bridge], &paths[index], &paths[bridge]) {
+                continue;
+            }
+            if seen.insert(bridge) {
+                chosen.push(bridge);
             }
         }
         // Reserve the longest takes (recorder hub).
@@ -1988,7 +2254,7 @@ mod tests {
             normalized_path("C:/media/same.wav"),
             normalized_path("mock://other"),
         ];
-        let pairs = prescan_pairs(&events, &infos, &HashSet::new(), &[], &paths);
+        let pairs = prescan_pairs(&events, &infos, &HashSet::new(), &[], &[], &paths);
         assert!(!pairs.contains(&(0, 1)), "duplicate media must not pair");
         assert!(pairs.contains(&(0, 2)));
         assert!(pairs.contains(&(1, 2)));
@@ -2010,15 +2276,136 @@ mod tests {
         let hubs = longest_take_indices(&events, HUB_SLOTS);
         assert_eq!(hubs.first().copied(), Some(3));
 
-        let pairs = prescan_pairs(&events, &infos, &HashSet::new(), &hubs, &paths);
+        let pairs = prescan_pairs(&events, &infos, &HashSet::new(), &hubs, &[], &paths);
         for index in 0..3 {
             assert!(pairs.contains(&(index.min(3), index.max(3))));
         }
     }
 
+    fn filename_info(order: f64) -> TimeInfo {
+        TimeInfo {
+            order_seconds: Some(order),
+            epoch_seconds: Some(order),
+            order_source: "filename",
+            epoch_source: "filename",
+            source: "filename",
+            trusted: true,
+        }
+    }
+
     #[test]
-    fn timeline_gap_handles_overlap_and_separation() {
-        let a = event("a", 10.0, 10.0, None, "normal");
+    fn compressed_filename_clock_keeps_timeline_spacing() {
+        let events = vec![
+            event("a", 0.0, 600.0, Some("recorder"), "normal"),
+            event("b", 700.0, 600.0, Some("recorder"), "normal"),
+            event("c", 1400.0, 600.0, Some("recorder"), "normal"),
+        ];
+        // Filenames are one minute apart although each clip is ten minutes long.
+        let infos = vec![
+            filename_info(1_000.0),
+            filename_info(1_060.0),
+            filename_info(1_120.0),
+        ];
+        let paths: Vec<String> = events
+            .iter()
+            .map(|event| normalized_path(&event.file_path))
+            .collect();
+        let mut warnings = Vec::new();
+        let links = sequence_links(&events, &infos, "auto", &paths, &mut warnings);
+        assert_eq!(links.len(), 2);
+        for link in &links {
+            assert!(
+                (link.offset_seconds - 700.0).abs() < 1e-6,
+                "expected the timeline gap, got {}",
+                link.offset_seconds
+            );
+            assert!((link.weight - SEQUENCE_UNTRUSTED_WEIGHT).abs() < 1e-9);
+        }
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("keeping the current timeline spacing")),
+            "expected a compressed-clock warning, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn plausible_recorded_clock_still_uses_clock_offsets() {
+        let events = vec![
+            event("a", 0.0, 600.0, Some("camera"), "normal"),
+            event("b", 1_000.0, 600.0, Some("camera"), "normal"),
+            event("c", 2_000.0, 600.0, Some("camera"), "normal"),
+        ];
+        let infos = vec![
+            time_info(Some(10_000.0), Some(10_000.0), true),
+            time_info(Some(11_000.0), Some(11_000.0), true),
+            time_info(Some(12_000.0), Some(12_000.0), true),
+        ];
+        let paths: Vec<String> = events
+            .iter()
+            .map(|event| normalized_path(&event.file_path))
+            .collect();
+        let mut warnings = Vec::new();
+        let links = sequence_links(&events, &infos, "auto", &paths, &mut warnings);
+        assert_eq!(links.len(), 2);
+        for link in &links {
+            assert!((link.offset_seconds - 1_000.0).abs() < 1e-6);
+            assert!((link.weight - SEQUENCE_TRUSTED_WEIGHT).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn bridge_hubs_connect_devices_with_disjoint_timelines() {
+        let mut events = vec![
+            event("cam-a", 0.0, 10.0, Some("camera"), "normal"),
+            event("cam-b", 500.0, 10.0, Some("camera"), "normal"),
+            event("rec-a", 20_000.0, 10.0, Some("recorder"), "normal"),
+            event("rec-b", 20_500.0, 10.0, Some("recorder"), "normal"),
+        ];
+        for event in &mut events {
+            event.file_path = format!("C:/media/{}.wav", event.event_id);
+        }
+        let paths: Vec<String> = events
+            .iter()
+            .map(|event| normalized_path(&event.file_path))
+            .collect();
+        let bridges = bridge_hubs(&events);
+        assert_eq!(bridges.len(), 2, "expected one bridge per device");
+        assert!(bridges.iter().any(|&index| index < 2));
+        assert!(bridges.iter().any(|&index| index >= 2));
+
+        let infos = vec![TimeInfo::NONE; 4];
+        let pairs = prescan_pairs(&events, &infos, &HashSet::new(), &[], &bridges, &paths);
+        // Every event must reach the long representative of the other device.
+        for camera in 0..2 {
+            assert!(
+                pairs.contains(&(camera, 2)),
+                "camera {camera} must reach the recorder hub"
+            );
+        }
+        for recorder in 2..4 {
+            assert!(
+                pairs.contains(&(0, recorder)),
+                "recorder {recorder} must reach the camera hub"
+            );
+        }
+    }
+
+    #[test]
+    fn overlapping_placement_is_detected_for_a_device() {
+        let events = vec![
+            event("a", 0.0, 100.0, Some("rec"), "normal"),
+            event("b", 200.0, 100.0, Some("rec"), "normal"),
+            event("c", 400.0, 100.0, Some("rec"), "normal"),
+        ];
+        let collapsed = vec![0.0, 10.0, 20.0];
+        assert_eq!(bad_overlap_pairs(&events, &collapsed, &[0, 1, 2]), 2);
+        let spaced = vec![0.0, 200.0, 400.0];
+        assert_eq!(bad_overlap_pairs(&events, &spaced, &[0, 1, 2]), 0);
+    }
+
+    #[test]
+    fn timeline_gap_handles_overlap_and_separation() {        let a = event("a", 10.0, 10.0, None, "normal");
         let b = event("b", 15.0, 10.0, None, "normal");
         let c = event("c", 40.0, 5.0, None, "normal");
         approx(timeline_gap(&a, &b), 0.0, 1e-9);
